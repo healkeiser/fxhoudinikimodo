@@ -24,7 +24,7 @@ column-vector 轉置)。骨架以 polyline 連接父子關節。
 
 | # | 標籤 | 內容 |
 |---|------|------|
-| 0 | **Animated Pose** | 逐幀動畫骨架。`name`、`path`、`parent_id`、`transform`(float[9] 世界旋轉)、`localtransform`(float[16] 局部 4×4)。 |
+| 0 | **Animated Pose** | 逐幀動畫骨架。`name`、`path`、`parent_id`、`transform`(float[9] 世界旋轉)、`localtransform`(float[16] 局部 4×4);NPZ 帶有足部接觸資料時另有 `contact`(int 0/1),見 [足部接觸](#足部接觸)。 |
 | 1 | **Capture Pose** | mesh 綁定的 A-pose rest 骨架(腳在地面)。`name`、`transform`。 |
 | 2 | **Rest Geometry** | SOMA77 身體 mesh 的 bind 姿勢,帶 KineFX `boneCapture` 屬性(權重 + bind 來自 Kimodo 蒙皮)。 |
 | 3 | **T-Pose** | T-pose 骨架(`name`、`transform`),供參考 / retarget。 |
@@ -74,10 +74,39 @@ NPZ(NumPy 壓縮封存)是 Kimodo 的推論輸出。節點讀取:
 | `global_rot_mats` | `(T, 77, 3, 3)` | 各關節世界空間旋轉 —— **節點會讀取**;`transform`/`localtransform` 由此推導 |
 | `local_rot_mats` | `(T, 77, 3, 3)` | 各關節局部旋轉(Kimodo 輸出;節點不需要) |
 | `root_positions` | `(T, 3)` | 根節點(Hips)世界位置 |
-| `foot_contacts` | `(T, 6)` | 足部接觸標記(布林) |
+| `foot_contacts` | `(T, 6)` | 足部接觸標記(布林)—— 存在時**節點會讀取**,轉為輸出 0 的 `contact` |
 
 節點重建骨架只需 **`posed_joints`** 與 **`global_rot_mats`**(SOMA77 關節順序)。任何相容的
 NPZ 都能用,不管怎麼產生的——把 **NPZ Path** 指過去即可。**Download Dir** 只在 Generate 時用到。
+
+#### 足部接觸
+
+NPZ 帶有 `foot_contacts` 時,輸出 0 會多一個 `int` 點屬性 **`contact`**:該幀腳關節著地為
+`1`,其餘皆為 `0`(包含所有非腳部關節)。沒有這個鍵值的 NPZ 就不會有 `contact` 屬性——請
+檢查屬性是否存在,不要把「值為 0」直接當成「從未著地」。
+
+這些標記來自模型本身:Kimodo 預測一個接觸通道並以 0.5 為閾值二值化,並非在此由關節運動反
+推。Kimodo 內部也會用它在輸出動作前修正腳滑。
+
+接觸偵測只在**每側兩個關節**上進行——腳踝與腳趾根部。SOMA77 的 NPZ 會有六個通道,其中
+`LeftToeEnd` / `RightToeEnd` 是對應 `ToeBase` 通道的複製,並非獨立偵測(四通道的 NPZ ——
+Kimodo 內部表示,未經 SOMA77 展開——同樣讀得進來,見下方說明):
+
+| 通道 | 關節 | |
+|---|---|---|
+| 0 | `LeftFoot` | 獨立偵測 |
+| 1 | `LeftToeBase` | 獨立偵測 |
+| 2 | `LeftToeEnd` | 複製自通道 1 |
+| 3 | `RightFoot` | 獨立偵測 |
+| 4 | `RightToeBase` | 獨立偵測 |
+| 5 | `RightToeEnd` | 複製自通道 4 |
+
+兩種情況下所有關節都會寫入屬性——是寫在全部 77 個點上,不只腳部——所以要驅動 foot lock
+時,請把兩個 `ToeEnd` 視為冗餘資訊。若是**四通道**的 NPZ,兩個 `ToeEnd` 沒有任何通道對應,
+整段動畫都會是 `0`,與「從未著地」無法區分;此時請改用 `ToeBase`。
+
+常見用途:在 `contact == 1` 期間鎖住腳部以消除腳滑,或偵測 `0` → `1` 的轉換作為腳步事件,
+用來驅動塵土、貼花或音效。
 
 ### Constraints（選用）
 

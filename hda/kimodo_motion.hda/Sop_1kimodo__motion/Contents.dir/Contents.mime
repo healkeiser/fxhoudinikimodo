@@ -116,6 +116,15 @@ SOMA77_JOINTS  = _m.SOMA77_JOINTS
 SOMA77_PARENTS = _m.SOMA77_PARENTS
 TPOSE_ROTS     = _m.TPOSE_ROTS
 
+# Joints behind each foot_contacts channel. A SOMA77 NPZ carries 6 channels, where
+# ToeEnd is a copy of ToeBase (Kimodo detects contact on 2 joints per side and
+# duplicates the toe channel when converting its output to SOMA77); NPZs exported
+# straight from the 4-channel internal representation carry only the detected pair.
+_FOOT_CHANNELS = {
+    6: (\"LeftFoot\", \"LeftToeBase\", \"LeftToeEnd\", \"RightFoot\", \"RightToeBase\", \"RightToeEnd\"),
+    4: (\"LeftFoot\", \"LeftToeBase\", \"RightFoot\", \"RightToeBase\"),
+}
+
 def _cook():
     node     = hou.pwd()
     hda_node = node.parent()
@@ -135,6 +144,15 @@ def _cook():
 
     pos  = posed[frame]
     grot = global_rots[frame]
+
+    # Optional: Kimodo's per-frame foot-contact labels. Absent from NPZs that only
+    # carry the two keys above, so the attribute is written only when they exist.
+    contacts = {}
+    if \"foot_contacts\" in data.files:
+        fc = data[\"foot_contacts\"]
+        channels = _FOOT_CHANNELS.get(fc.shape[-1])
+        if channels:
+            contacts = {n: int(v) for n, v in zip(channels, fc[frame])}
 
     paths = []
     def _build_path(i):
@@ -162,6 +180,8 @@ def _cook():
     geo.addAttrib(hou.attribType.Point, \"parent_id\",      -1)
     geo.addAttrib(hou.attribType.Point, \"transform\",      _ID9)
     geo.addAttrib(hou.attribType.Point, \"localtransform\", _ID16)
+    if contacts:
+        geo.addAttrib(hou.attribType.Point, \"contact\", 0)
 
     for i, (name, parent) in enumerate(zip(SOMA77_JOINTS, SOMA77_PARENTS)):
         # local 4x4 = world_i @ inverse(world_parent); root keeps its world matrix
@@ -173,6 +193,8 @@ def _cook():
         pt.setAttribValue(\"parent_id\",      parent)
         pt.setAttribValue(\"transform\",      tuple(float(v) for v in world_rot[i].T.flatten()))
         pt.setAttribValue(\"localtransform\", tuple(float(v) for v in local_m.flatten()))
+        if contacts:
+            pt.setAttribValue(\"contact\", contacts.get(name, 0))
 
     pts = list(geo.points())
     for i, parent in enumerate(SOMA77_PARENTS):

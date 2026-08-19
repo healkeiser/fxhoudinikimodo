@@ -27,7 +27,7 @@ parent-child joint pair with a polyline primitive.
 
 | # | Label | Content |
 |---|-------|---------|
-| 0 | **Animated Pose** | Per-frame animated skeleton. `name`, `path`, `parent_id`, `transform` (float[9] world rotation), `localtransform` (float[16] local 4×4). |
+| 0 | **Animated Pose** | Per-frame animated skeleton. `name`, `path`, `parent_id`, `transform` (float[9] world rotation), `localtransform` (float[16] local 4×4), and `contact` (int 0/1) when the NPZ carries foot contacts — see [Foot contacts](#foot-contacts). |
 | 1 | **Capture Pose** | The A-pose rest skeleton the body mesh is bound to (feet on floor). `name`, `transform`. |
 | 2 | **Rest Geometry** | The SOMA77 body mesh in its bind pose, with a KineFX `boneCapture` attribute (weights + bind from Kimodo's skinning). |
 | 3 | **T-Pose** | A T-pose skeleton (`name`, `transform`) for reference / retargeting. |
@@ -78,11 +78,47 @@ An NPZ file (NumPy compressed archive) is Kimodo's inference output. The node re
 | `global_rot_mats` | `(T, 77, 3, 3)` | World-space joint rotations — **read by the node**; `transform` / `localtransform` are derived from these |
 | `local_rot_mats` | `(T, 77, 3, 3)` | Local rotation matrices (Kimodo output; not required by the node) |
 | `root_positions` | `(T, 3)` | Root (Hips) world position |
-| `foot_contacts` | `(T, 6)` | Boolean foot-contact labels |
+| `foot_contacts` | `(T, 6)` | Boolean foot-contact labels — **read by the node** when present; becomes `contact` on output 0 |
 
 The node only needs **`posed_joints`** and **`global_rot_mats`** (SOMA77 joint order) to
 rebuild the skeleton. Any compatible NPZ works regardless of how it was produced — set
 **NPZ Path** to it. **Download Dir** is only used by **Generate**.
+
+#### Foot contacts
+
+When the NPZ carries `foot_contacts`, output 0 gains an `int` point attribute
+**`contact`**: `1` on a foot joint while it is planted that frame, `0` everywhere else
+(including every non-foot joint). NPZs without the key simply have no `contact`
+attribute — check for it rather than assuming zeros mean "never planted".
+
+The labels come from the model itself: Kimodo predicts a contact channel and
+thresholds it at 0.5, so they are not re-derived from the joint motion here. Kimodo
+also consumes them internally to clean up foot skating before the motion is written.
+
+Contacts are detected on **two joints per side** — the ankle and the toe base. A
+SOMA77 NPZ reports six channels, where `LeftToeEnd` / `RightToeEnd` are copies of the
+matching `ToeBase` channel rather than independent detections (a four-channel NPZ —
+Kimodo's internal representation, without the SOMA77 expansion — is read too; see
+below):
+
+| Channel | Joint | |
+|---|---|---|
+| 0 | `LeftFoot` | detected |
+| 1 | `LeftToeBase` | detected |
+| 2 | `LeftToeEnd` | copy of channel 1 |
+| 3 | `RightFoot` | detected |
+| 4 | `RightToeBase` | detected |
+| 5 | `RightToeEnd` | copy of channel 4 |
+
+Every joint carries the attribute either way — it is written on all 77 points, not
+only the feet — so treat the two `ToeEnd` joints as redundant when driving a foot
+lock. With a **four-channel** NPZ the two `ToeEnd` joints are not covered by any
+channel and stay `0` for the whole clip, which is indistinguishable from "never
+planted"; use `ToeBase` in that case.
+
+Typical uses: locking a foot in place while `contact == 1` to kill foot skating, or
+detecting the `0` → `1` transition as a footstep event to drive dust, decals or audio
+cues.
 
 ### Constraints (optional)
 
