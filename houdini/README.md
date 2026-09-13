@@ -1,6 +1,6 @@
 # HDA Library
 
-This directory contains the Houdini Digital Asset for the Kimodo-Houdini bridge,
+This folder is added to `HOUDINI_PATH` by the package file; `otls/` holds the Digital Asset for the Kimodo bridge,
 stored in **unpacked (VCS-friendly) format** — a directory ending in `.hda/`.
 
 ---
@@ -227,7 +227,7 @@ hython scripts/build_skin.py
 # 2. Rebuild the packed HDA at the repo root (embeds the skin sections)
 hython scripts/create_hda.py
 
-# 3. Add the help card and save the unpacked HDA to hda/
+# 3. Add the help card and save the unpacked HDA to houdini/otls/
 hython scripts/_add_help.py
 ```
 
@@ -247,8 +247,8 @@ copy fxhoudinikimodo.json %HOUDINI_USER_PREF_DIR%\packages\
 cp fxhoudinikimodo.json ~/houdiniXX.Y/packages/
 ```
 
-Restart Houdini — the `kimodo_motion` SOP appears in the Tab menu under **Kimodo**.
+Restart Houdini — the **Kimodo Motion** SOP appears in the Tab menu under **Kimodo**.
 
 ### Option B — Manual install
 
-In Houdini: **Assets → Install Asset Library…** → select `hda/vb_kimodo_motion_1.1.hda/`.
+In Houdini: **Assets → Install Asset Library…** → select `houdini/otls/vb_kimodo_motion_1.1.hda/`.

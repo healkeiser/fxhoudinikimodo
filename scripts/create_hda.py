@@ -4,7 +4,7 @@ Create the vb::kimodo_motion HDA via hython (no GUI needed).
 Usage:
     hython scripts/create_hda.py [npz_default]
 
-Output: vb_kimodo_motion_1.1.hda in the repo root (packed; _add_help.py expands it into hda/).
+Output: vb_kimodo_motion_1.1.hda in the repo root (packed; _add_help.py expands it into houdini/otls/).
 """
 import os
 import re

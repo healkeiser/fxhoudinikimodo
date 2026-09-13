@@ -158,7 +158,7 @@ Copy `fxhoudinikimodo.json` into `$HOUDINI_USER_PREF_DIR/packages/` and set `KIM
 4. To steer: connect a curve to input 0 for a root path, or press **Create Pose Rig**, pose it, list the frames in **Pose Keyframes**.
 5. To put the motion on your own character: **Biped Setup** on both skeletons, **Biped Retarget**, then your deformer. Feed output 3 (T-Pose) through a **Rig Stash Pose** to give Biped Setup a clean rest pose; do not let it synthesise one from the walk.
 
-Parameter by parameter: [hda/README.md](hda/README.md).
+Parameter by parameter: [houdini/README.md](houdini/README.md).
 
 <!-- ENVIRONMENT VARIABLES -->
 ## Environment Variables
@@ -178,7 +178,7 @@ Read by `docker-compose.bridge.yaml`:
 <!-- DEVELOPMENT -->
 ## Development
 
-The HDA is generated, not hand-edited. `scripts/create_hda.py` is the single source of the node interface, cook scripts and callbacks; `hda/vb_kimodo_motion_1.1.hda/` is the expanded, VCS-friendly result.
+The HDA is generated, not hand-edited. `scripts/create_hda.py` is the single source of the node interface, cook scripts and callbacks; `houdini/otls/vb_kimodo_motion_1.1.hda/` is the expanded, VCS-friendly result.
 
 ```shell
 # 1. embedded skin mesh + A-pose skeleton (needs the kimodo repo cloned alongside)
@@ -187,7 +187,7 @@ hython scripts/build_skin.py
 # 2. the HDA itself, packed, in the repo root
 hython scripts/create_hda.py
 
-# 3. help card, saved expanded into hda/
+# 3. help card, saved expanded into houdini/otls/
 hython scripts/_add_help.py
 ```
 

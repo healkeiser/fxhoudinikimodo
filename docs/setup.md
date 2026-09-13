@@ -156,9 +156,9 @@ $HFS/bin/hython -m pip install requests scipy numpy
 
 ## 7. Install & use the HDA
 
-The repo ships the HDA prebuilt under `hda/` — install it in Houdini
+The repo ships the HDA prebuilt under `houdini/otls/` — install it in Houdini
 (**Assets → Install Asset Library…** or via the package file; see
-[hda/README.md](../hda/README.md)).
+[houdini/README.md](../houdini/README.md)).
 
 Drop a **`kimodo_motion`** node in a SOP network:
 
@@ -177,8 +177,8 @@ Drop a **`kimodo_motion`** node in a SOP network:
 > [Kimodo constraints](https://research.nvidia.com/labs/sil/projects/kimodo/docs/key_concepts/constraints.html)
 > as JSON (**Constraints File** / **Constraints JSON**), connect a curve/points to input 0
 > for a root path, or use **Create Pose Rig** to pose a skeleton (input 1) for full-body /
-> end-effector constraints — see [hda/README.md](../hda/README.md#constraints-optional).
+> end-effector constraints — see [houdini/README.md](../houdini/README.md#constraints-optional).
 >
 > Developers who edit the cook scripts can rebuild the HDA:
 > `hython scripts/build_skin.py` → `hython scripts/create_hda.py` →
-> `hython scripts/_add_help.py` — see [hda/README.md](../hda/README.md#rebuilding-the-hda).
+> `hython scripts/_add_help.py` — see [houdini/README.md](../houdini/README.md#rebuilding-the-hda).

@@ -11,10 +11,10 @@ __pycache__/
 *.hiplc
 *.hip
 backup/
-# Exclude packed binary HDA at repo root (only hda/ unpacked format is canonical)
+# Exclude packed binary HDA at repo root (only houdini/otls/ unpacked format is canonical)
 /vb_kimodo_motion_1.1.hda
 
 # build_skin.py artifacts at repo root (embedded into the HDA as sections instead).
-# Anchored to root so the copies embedded under hda/ stay tracked.
+# Anchored to root so the copies embedded under houdini/otls/ stay tracked.
 /skin.bgeo.sc
 /apose.bgeo.sc
