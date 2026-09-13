@@ -320,7 +320,8 @@ else:
                 try:
                     _set("status", f"Downloading...{elapsed_str}")
                     os.makedirs(download_dir, exist_ok=True)
-                    local_npz = os.path.join(download_dir, f"{job_id}.npz")
+                    # forward slashes: Houdini's own convention, and what the user typed
+                    local_npz = download_dir.rstrip("/\\") + f"/{job_id}.npz"
                     with requests.get(f"{url}/jobs/{job_id}/download", timeout=120, stream=True) as dl:
                         dl.raise_for_status()
                         with open(local_npz, "wb") as fh:
