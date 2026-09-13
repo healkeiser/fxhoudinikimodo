@@ -1,7 +1,5 @@
 # HDA Library
 
-[繁體中文](README.zh-TW.md)
-
 This directory contains the Houdini Digital Asset for the Kimodo-Houdini bridge,
 stored in **unpacked (VCS-friendly) format** — a directory ending in `.hda/`.
 
@@ -9,7 +7,7 @@ stored in **unpacked (VCS-friendly) format** — a directory ending in `.hda/`.
 
 ## kimodo_motion.hda
 
-**Type:** `Sop/kimodo_motion`  
+**Type:** `Sop/vb::kimodo_motion::1.1` (namespace `vb`, versioned)  
 **Context:** SOP (geometry network)  
 **Houdini:** H20.5+
 
@@ -57,7 +55,7 @@ in the network editor.
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | Prompt | `a person walks forward` | Multi-line. What the character does, in English; be specific about body part, direction, speed and style. |
-| Duration (frames) | `3*$FPS` | Clip length in scene frames at the current FPS; converted to seconds for Kimodo (30 fps). With Retime on you get back exactly this many frames. |
+| Duration (frames) | `72` | Clip length in scene frames at the current FPS; converted to seconds for Kimodo (30 fps). With Retime on you get back exactly this many frames. |
 | Model | `Kimodo-SOMA-RP-v1.1` | Kimodo checkpoint. `RP` conditions on a rest pose; `SEED` uses a fixed seed for reproducibility. |
 | **Generate** / **Cancel** | — | Submit the prompt and return at once; a background thread polls, downloads the NPZ and recooks the node. Cancel stops a queued job or discards the result. |
 | Force Regenerate | `off` | Bypass the server cache (keyed on prompt + duration + model + constraints). |

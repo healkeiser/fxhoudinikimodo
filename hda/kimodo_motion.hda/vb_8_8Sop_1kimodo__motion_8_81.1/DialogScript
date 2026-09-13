@@ -1,8 +1,8 @@
-# Dialog script for kimodo_motion automatically generated
+# Dialog script for vb::kimodo_motion::1.1 automatically generated
 
 {
-    name	kimodo_motion
-    script	kimodo_motion
+    name	vb::kimodo_motion::1.1
+    script	vb::kimodo_motion::1.1
     label	"Kimodo Motion Generator"
 
     help {
@@ -34,8 +34,8 @@
             name    "duration_frames"
             label   "Duration (frames)"
             type    integer
-            default { [ "3*$FPS" hscript-expr ] }
-            help    "Length of the clip in scene frames at the current $FPS. Converted to seconds for Kimodo, which generates at 30 fps; with Retime on you get back exactly this many frames."
+            default { "72" }
+            help    "Length of the clip in scene frames at the current $FPS (72 = 3 s at 24 fps). Converted to seconds for Kimodo, which generates at 30 fps; with Retime on you get back exactly this many frames."
             range   { 12 720 }
         }
         parm {

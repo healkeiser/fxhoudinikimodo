@@ -1,6 +1,5 @@
 # Setup Guide
 
-[繁體中文](setup.zh-TW.md)
 
 End-to-end setup, from the Docker inference server to the Houdini HDA. The server
 preloads the Kimodo model once and serves inference in-process; Houdini fetches the

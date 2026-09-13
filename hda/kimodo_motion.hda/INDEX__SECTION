@@ -1,7 +1,7 @@
-Operator:     kimodo_motion
+Operator:     vb::kimodo_motion::1.1
 Label:        Kimodo Motion Generator
-Path:         oplib:/Sop/kimodo_motion?Sop/kimodo_motion
-Icon:         opdef:/Sop/kimodo_motion?IconSVG
+Path:         oplib:/vb::Sop/kimodo_motion::1.1?vb::Sop/kimodo_motion::1.1
+Icon:         opdef:/vb::Sop/kimodo_motion::1.1?IconSVG
 Table:        Sop
 License:      
 Extra:        visibleoutputs=4 
@@ -11,5 +11,5 @@ Outputs:      4
 Subnet:       true
 Python:       false
 Empty:        false
-Modified:     Sun Sep 13 22:42:23 2026
+Modified:     Sun Sep 13 22:48:19 2026
 

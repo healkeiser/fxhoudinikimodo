@@ -185,10 +185,21 @@ def main():
     src  = os.path.join(_HERE, "..", "kimodo_motion.hda")
     dest = os.path.join(_HERE, "..", "hda", "kimodo_motion.hda")
     hou.hda.installFile(src)
-    hda_def = hou.hda.definitionsInFile(src)[0]
+    defs = hou.hda.definitionsInFile(src)
+    assert len(defs) == 1, "expected exactly one definition in %s, got %s" % (src, [d.nodeTypeName() for d in defs])
+    hda_def = defs[0]
     hda_def.addSection("Help", HELP_CARD)
+    # Empty the expanded directory but keep it: Houdini saves expanded only into an
+    # existing directory, and a stale sibling definition must not survive a rename.
+    import shutil
+    if os.path.isdir(dest):
+        for entry in os.listdir(dest):
+            p = os.path.join(dest, entry)
+            shutil.rmtree(p) if os.path.isdir(p) else os.remove(p)
+    else:
+        os.makedirs(dest)
     hda_def.save(dest)
-    print(f"Saved: {dest}  (help {len(hda_def.embeddedHelp())} chars)")
+    print(f"Saved: {dest}  type: {hda_def.nodeTypeName()}  (help {len(hda_def.embeddedHelp())} chars)")
 
 
 if __name__ == "__main__":

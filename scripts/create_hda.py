@@ -26,6 +26,10 @@ _KIMODO_FPS = 30
 # Node icon (embedded into the HDA as its IconSVG section).
 _ICON_SVG = os.path.join(_HERE, "kimodo_icon.svg")
 
+# Node type is <namespace>::kimodo_motion::<version>; bump _VERSION for breaking UI changes.
+_NAMESPACE = "vb"
+_VERSION   = "1.1"
+
 
 def _skin_sections():
     missing = [p for p in (_SKIN_BGEO, _APOSE_BGEO) if not os.path.exists(p)]
@@ -554,19 +558,26 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
     first.setRenderFlag(True)
     subnet.layoutChildren()
 
+    # createDigitalAsset appends to an existing library file; start clean so the packed
+    # file holds exactly one definition (the one _add_help.py picks up).
+    if os.path.exists(hda_path):
+        os.remove(hda_path)
     hda_node = subnet.createDigitalAsset(
-        name=node_name,
+        name="%s::%s::%s" % (_NAMESPACE, node_name, _VERSION),   # version must be in the name
         hda_file_name=hda_path,
         description=description,
         min_num_inputs=0,
         max_num_inputs=2,   # input 0: geometry -> root2d; input 1: posed skeleton -> fullbody/EE
-        version="1.1",
+        version=_VERSION,
     )
     hda_def = hda_node.type().definition()
     hda_def.setMaxNumOutputs(len(labels))
     # Node icon: the SVG in scripts/kimodo_icon.svg, embedded as the IconSVG section.
+    # Namespaced opdef form: opdef:/<namespace>::Sop/<name>::<version>?IconSVG
+    scope, ns, base, ver = hda_node.type().nameComponents()
+    icon_path = "opdef:/%sSop/%s%s?IconSVG" % (ns + "::" if ns else "", base, "::" + ver if ver else "")
     hda_def.addSection("IconSVG", open(_ICON_SVG, encoding="utf-8").read())
-    hda_def.setIcon("opdef:/Sop/%s?IconSVG" % node_name)
+    hda_def.setIcon(icon_path)
     hda_def.addSection("PythonModule", _MODULE_SRC)   # SOMA77 data for the cook scripts
     hda_def.addSection("OnCreated", _ON_CREATED)
     hda_def.setExtraFileOption("OnCreated/IsPython", True)
@@ -600,11 +611,11 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
     ))
     gen.addParmTemplate(hou.IntParmTemplate(
         "duration_frames", "Duration (frames)", 1,
-        default_expression=("3*$FPS",),
-        default_expression_language=(hou.scriptLanguage.Hscript,),
+        default_value=(72,),
         min=12, max=720, min_is_strict=False, max_is_strict=False,
-        help="Length of the clip in scene frames at the current $FPS. Converted to seconds for "
-             "Kimodo, which generates at 30 fps; with Retime on you get back exactly this many frames.",
+        help="Length of the clip in scene frames at the current $FPS (72 = 3 s at 24 fps). "
+             "Converted to seconds for Kimodo, which generates at 30 fps; with Retime on you get "
+             "back exactly this many frames.",
     ))
     gen.addParmTemplate(hou.MenuParmTemplate(
         "model", "Model",
@@ -796,7 +807,7 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
     hda_def.addSection("DialogScript", "".join(ds[:after + 1]) + inject + "".join(ds[after + 1:]))
     hda_def.save(hda_path)
 
-    print(f"HDA saved: {hda_path}  outputs: {labels}")
+    print(f"HDA saved: {hda_path}  type: {hda_node.type().name()}  outputs: {labels}")
     print(f"  parms: {[p.name() for p in hda_def.parmTemplateGroup().parmTemplates()]}")
 
 
