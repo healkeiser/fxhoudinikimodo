@@ -1,14 +1,14 @@
 {
-	"values":["21.0.729"
+	"values":["22.0.368"
 	],
 	"indexes":{
 		"hdaroot/apose_sop.userdata":0,
 		"hdaroot/output2.userdata":0,
 		"hdaroot/output1.userdata":0,
+		"hdaroot/tpose_sop.userdata":0,
+		"hdaroot/animated_sop.userdata":0,
 		"hdaroot/output0.userdata":0,
 		"hdaroot/skin_sop.userdata":0,
-		"hdaroot/gen_sop.userdata":0,
-		"hdaroot/rest_sop.userdata":0,
 		"hdaroot/output3.userdata":0
 	}
 }

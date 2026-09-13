@@ -27,15 +27,15 @@ parent-child joint pair with a polyline primitive.
 
 | # | Label | Content |
 |---|-------|---------|
-| 0 | **Animated Pose** | Per-frame animated skeleton. `name`, `path`, `parent_id`, `transform` (float[9] world rotation), `localtransform` (float[16] local 4×4), and `contact` (int 0/1) when the NPZ carries foot contacts — see [Foot contacts](#foot-contacts). |
+| 0 | **Rest Geometry** | The SOMA77 body mesh in its bind pose, with a KineFX `boneCapture` attribute (weights + bind from Kimodo's skinning). |
 | 1 | **Capture Pose** | The A-pose rest skeleton the body mesh is bound to (feet on floor). `name`, `transform`. |
-| 2 | **Rest Geometry** | The SOMA77 body mesh in its bind pose, with a KineFX `boneCapture` attribute (weights + bind from Kimodo's skinning). |
+| 2 | **Animated Pose** | Per-frame animated skeleton. `name`, `path`, `parent_id`, `transform` (float[9] world rotation), `localtransform` (float[16] local 4×4), and `contact` (int 0/1) when the NPZ carries foot contacts — see [Foot contacts](#foot-contacts). |
 | 3 | **T-Pose** | A T-pose skeleton (`name`, `transform`) for reference / retargeting. |
 
-**To deform the body**, drop a **`kinefx::jointdeform`** (Labs/KineFX Joint Deform) and wire:
-input 0 = **Rest Geometry** (output 2), input 1 = **Capture Pose** (output 1),
-input 2 = **Animated Pose** (output 0). The mesh follows the animation and returns to
-the bind pose at rest. (output 0 also drives a **Rig Pose / Bone Deform** workflow directly.)
+**To deform the body**, drop a **`kinefx::jointdeform`** (KineFX Joint Deform) and wire
+outputs 0, 1, 2 straight into inputs 0, 1, 2 — the same order as Houdini's Test Geometry
+characters. The mesh follows the animation and returns to the bind pose at rest. (output 2
+also drives a **Rig Pose / Bone Deform** workflow directly.)
 
 ### Inputs (optional)
 
@@ -54,7 +54,12 @@ normal use:
 | API Server URL | `http://localhost:8001` | URL of the running `kimodo_server`. Point at the GPU host if the server runs elsewhere. |
 | Download Dir | `$HIP/kimodo_cache` | Local folder where finished NPZ files are downloaded from the server over HTTP. |
 | Prompt | `a person walks forward` | Natural language description of the motion. Be specific about body part, direction, speed and style. |
-| Duration (s) | `3.0` | Length of the clip in seconds. At 30 fps, 3 s = 90 frames. |
+| Duration (frames) | `3*$FPS` | Length of the clip in scene frames at the current FPS; converted to seconds for Kimodo (which samples at 30 fps). With Retime on you get back exactly this many frames. |
+| Clip | _(read-only)_ | Length of the last generated clip in samples and seconds. |
+| Start Frame | `$FSTART` | Scene frame the clip begins on (Output tab). First sample holds before it, last sample after it. |
+| Retime to Scene FPS (Advanced) | `on` | Map the 30 fps clip onto scene frames so it keeps its real duration at 24/25/30 fps (nearest sample). Off = one sample per frame. |
+| Clip FPS (Advanced) | `30` | Frame rate Kimodo generated the clip at, a property of the model, not the scene. Leave at 30 for SOMA; setting it to $FPS disables retiming. |
+| Test Connection | — | Pings `<API Server URL>/health` and reports in Status (Server tab). |
 | Model | `Kimodo-SOMA-RP-v1.1` | Kimodo model variant. `RP` conditions on a rest pose; `SEED` uses a fixed seed for reproducibility. |
 | Force Regenerate | `off` | Bypass the server cache and re-run inference even if a matching clip exists. |
 | Constraints File | _(empty)_ | Optional [Kimodo constraints](https://research.nvidia.com/labs/sil/projects/kimodo/docs/key_concepts/constraints.html) JSON file (`*.json`). See [Constraints](#constraints-optional). |
@@ -78,7 +83,7 @@ An NPZ file (NumPy compressed archive) is Kimodo's inference output. The node re
 | `global_rot_mats` | `(T, 77, 3, 3)` | World-space joint rotations — **read by the node**; `transform` / `localtransform` are derived from these |
 | `local_rot_mats` | `(T, 77, 3, 3)` | Local rotation matrices (Kimodo output; not required by the node) |
 | `root_positions` | `(T, 3)` | Root (Hips) world position |
-| `foot_contacts` | `(T, 6)` | Boolean foot-contact labels — **read by the node** when present; becomes `contact` on output 0 |
+| `foot_contacts` | `(T, 6)` | Boolean foot-contact labels — **read by the node** when present; becomes `contact` on output 2 |
 
 The node only needs **`posed_joints`** and **`global_rot_mats`** (SOMA77 joint order) to
 rebuild the skeleton. Any compatible NPZ works regardless of how it was produced — set
@@ -86,7 +91,7 @@ rebuild the skeleton. Any compatible NPZ works regardless of how it was produced
 
 #### Foot contacts
 
-When the NPZ carries `foot_contacts`, output 0 gains an `int` point attribute
+When the NPZ carries `foot_contacts`, output 2 gains an `int` point attribute
 **`contact`**: `1` on a foot joint while it is planted that frame, `0` everywhere else
 (including every non-foot joint). NPZs without the key simply have no `contact`
 attribute — check for it rather than assuming zeros mean "never planted".
@@ -220,9 +225,9 @@ Copy the package file to your Houdini packages directory, then edit
 
 ```bash
 # Windows
-copy kimodo-houdini-bridge.json %HOUDINI_USER_PREF_DIR%\packages\
+copy fxhoudinikimodo.json %HOUDINI_USER_PREF_DIR%\packages\
 # Linux / macOS
-cp kimodo-houdini-bridge.json ~/houdiniXX.Y/packages/
+cp fxhoudinikimodo.json ~/houdiniXX.Y/packages/
 ```
 
 Restart Houdini — the `kimodo_motion` SOP appears in the Tab menu under **Kimodo**.

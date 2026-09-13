@@ -12,174 +12,258 @@
     inputlabel	2	"Pose Keyframes / skeleton (opt)"
     inputlabel	3	"Sub-Network Input #3"
     inputlabel	4	"Sub-Network Input #4"
-    outputlabel	1	"Animated Pose"
+    outputlabel	1	"Rest Geometry"
     outputlabel	2	"Capture Pose"
-    outputlabel	3	"Rest Geometry"
+    outputlabel	3	"Animated Pose"
     outputlabel	4	"T-Pose"
 
-    parm {
-        name    "sep_api"
-        label   ""
-        type    separator
-        default { "" }
-    }
-    parm {
-        name    "server_url"
-        label   "API Server URL"
-        type    string
-        default { "http://localhost:8001" }
-    }
-    parm {
-        name    "download_dir"
-        label   "Download Dir"
-        type    string
-        default { "$HIP/kimodo_cache" }
-        help    "Local folder where generated NPZ files are downloaded from the server."
-    }
-    parm {
-        name    "sep_gen"
-        label   ""
-        type    separator
-        default { "" }
-    }
-    parm {
-        name    "prompt"
-        label   "Prompt"
-        type    string
-        default { "a person walks forward" }
-    }
-    parm {
-        name    "duration"
-        label   "Duration (s)"
-        type    float
-        default { "3" }
-        range   { 0.5 30 }
-    }
-    parm {
-        name    "model"
-        label   "Model"
-        type    ordinal
-        default { "0" }
-        menu {
-            "Kimodo-SOMA-RP-v1.1"   "Kimodo-SOMA-RP-v1.1"
-            "Kimodo-SOMA-SEED-v1.1" "Kimodo-SOMA-SEED-v1.1"
-            "Kimodo-SOMA-RP-v1"     "Kimodo-SOMA-RP-v1"
-        }
-    }
-    parm {
-        name    "force"
-        label   "Force Regenerate"
-        type    toggle
-        default { "0" }
-        help    "Bypass the server cache and re-run inference even if a matching clip exists."
-    }
-    parm {
-        name    "sep_constraints"
-        label   ""
-        type    separator
-        default { "" }
-    }
-    parm {
-        name    "constraints_file"
-        label   "Constraints File"
-        type    file
-        default { "" }
-        help    "Optional Kimodo constraints JSON (e.g. exported from the Kimodo demo). Ignored when Constraints JSON below is non-empty."
-        parmtag { "filechooser_pattern" "*.json" }
-    }
-    parm {
-        name    "constraints_json"
-        label   "Constraints JSON"
-        type    string
-        default { "" }
-        help    "Optional inline Kimodo constraints JSON (a list of constraint dicts). Takes precedence over Constraints File."
-        parmtag { "editor" "1" }
-    }
-    parm {
-        name    "sep_pose"
-        label   ""
-        type    separator
-        default { "" }
-    }
-    parm {
-        name    "pose_type"
-        label   "Pose Constraint"
-        type    ordinal
-        default { "0" }
-        help    "How to use a posed skeleton wired to input 1: constrain the whole body, or only selected end-effectors (hands/feet)."
-        menu {
-            "Full-Body"     "Full-Body"
-            "End-Effector"  "End-Effector"
-        }
-    }
-    parm {
-        name    "ee_left_hand"
-        label   "Left Hand"
-        type    toggle
-        default { "0" }
-        parmtag { "disablewhen" "{ pose_type != \"End-Effector\" }" }
-    }
-    parm {
-        name    "ee_right_hand"
-        label   "Right Hand"
-        type    toggle
-        default { "1" }
-        parmtag { "disablewhen" "{ pose_type != \"End-Effector\" }" }
-    }
-    parm {
-        name    "ee_left_foot"
-        label   "Left Foot"
-        type    toggle
-        default { "0" }
-        parmtag { "disablewhen" "{ pose_type != \"End-Effector\" }" }
-    }
-    parm {
-        name    "ee_right_foot"
-        label   "Right Foot"
-        type    toggle
-        default { "0" }
-        parmtag { "disablewhen" "{ pose_type != \"End-Effector\" }" }
-    }
-    parm {
-        name    "pose_keyframes"
-        label   "Pose Keyframes"
-        type    string
-        default { "" }
-        help    "Frame numbers to sample the input-1 skeleton at, e.g. `0 45 89`. Empty = no pose constraint."
-    }
-    parm {
-        name    "make_pose_rig"
-        label   "Create Pose Rig"
-        type    button
-        default { "0" }
-        help    "Drop an independent A-pose rig (+ Rig Pose) into the network and wire it to input 1. Pose / keyframe it to author full-body / end-effector constraints."
-        parmtag { "script_callback" "\nimport hou\n\nnode = kwargs[\"node\"]\nparent = node.parent()\nloader = (\n    \"import os, base64, tempfile, hou\\n\"\n    \"hda = hou.nodeType(hou.sopNodeTypeCategory(), %r).definition()\\n\"\n    \"data = base64.b64decode(hda.sections()['apose.bgeo.sc'].contents())\\n\"\n    \"fd, p = tempfile.mkstemp(prefix='kimodo_', suffix='_apose.bgeo.sc'); os.close(fd)\\n\"\n    \"try:\\n\"\n    \"    open(p, 'wb').write(data)\\n\"\n    \"    hou.pwd().geometry().loadFromFile(p)\\n\"\n    \"finally:\\n\"\n    \"    try: os.remove(p)\\n\"\n    \"    except OSError: pass\\n\"\n) % node.type().name()\n\nrig = parent.createNode(\"python\", \"kimodo_pose_rig\")\nrig.parm(\"python\").set(loader)\ntry:\n    tip = parent.createNode(\"kinefx::rigpose\", \"pose_keyframes\")\n    tip.setInput(0, rig)\nexcept hou.OperationFailed:\n    tip = rig\nrig.moveToGoodPosition()\nif tip is not rig:\n    tip.moveToGoodPosition()\nwired = node.input(1) is None\nif wired:\n    node.setInput(1, tip)\ntip.setCurrent(True, clear_all_selected=True)\nhou.ui.displayMessage(\n    \"Created an independent A-pose rig%s.\\n\\nPose / keyframe it, set Pose Keyframes, choose \"\n    \"Full-Body or End-Effector, then Generate.%s\" % (\n        \" + Rig Pose\" if tip is not rig else \"\",\n        \"\" if wired else \"\\n\\nWire it into this node's input 1.\",\n    ),\n    title=\"Kimodo\",\n)\n" }
-        parmtag { "script_callback_language" "python" }
-    }
-    parm {
-        name    "generate"
+    group {
+        name    "fld_generate"
         label   "Generate"
-        type    button
-        joinnext
-        default { "0" }
-        parmtag { "script_callback" "\nimport json, threading, time, requests, hou\nimport numpy as np\n\nnode         = kwargs[\"node\"]\nurl          = node.parm(\"server_url\").eval().rstrip(\"/\")\ndownload_dir = node.parm(\"download_dir\").eval()\n\ntry:\n    # Optional Kimodo constraints: the inline JSON wins; otherwise read the file.\n    raw = node.parm(\"constraints_json\").eval().strip()\n    if not raw:\n        cfile = node.parm(\"constraints_file\").eval().strip()\n        raw = open(cfile, encoding=\"utf-8\").read() if cfile else \"\"\n    constraints = json.loads(raw) if raw else None\n    if constraints is not None and not isinstance(constraints, list):\n        raise ValueError(\"Constraints must be a JSON list of constraint dicts.\")\n\n    # Optional input geometry -> a root2d constraint. Houdini world XZ maps 1:1 to\n    # Kimodo's smooth_root_2d (same Y-up metric space the node outputs). Points with\n    # a `frame` int attribute become sparse waypoints (you control the timing);\n    # otherwise the points (in order, e.g. a polyline) are spread evenly over the\n    # clip as a denser path.\n    ins = node.inputs()\n    if ins and ins[0] is not None:\n        geo = node.inputGeometry(0)\n        pts = geo.points()\n        if pts:\n            xz = [[float(p.position()[0]), float(p.position()[2])] for p in pts]\n            if geo.findPointAttrib(\"frame\") is not None:\n                frames = [int(p.attribValue(\"frame\")) for p in pts]\n            elif len(pts) > 1:\n                # SOMA models run at 30 fps: num_frames = int(duration * 30)\n                T = max(2, int(node.parm(\"duration\").eval() * 30))\n                frames = [int(round(i * (T - 1) / (len(pts) - 1))) for i in range(len(pts))]\n            else:\n                frames = [0]\n            # dedup by frame (keep first), sort by frame\n            by_frame = {}\n            for f, c in zip(frames, xz):\n                by_frame.setdefault(f, c)\n            items = sorted(by_frame.items())\n            root2d = {\"type\": \"root2d\",\n                      \"frame_indices\": [f for f, _ in items],\n                      \"smooth_root_2d\": [c for _, c in items]}\n            constraints = (constraints or []) + [root2d]\n\n    # Optional posed-skeleton input (input 1) -> a full-body / end-effector constraint.\n    # Pose the node's own Capture Pose (A-pose) output with KineFX, keyframe it, and wire\n    # it back here. At each listed keyframe we read the posed joints and invert the cook's\n    # forward transform to recover Kimodo's global rotation: the cook stores\n    # transform = (grot @ tp).T, so grot = (transform.T) @ tp.T  (tp = TPOSE_ROTS).\n    # Positions are already Kimodo-global. The server builds the constraint via the\n    # FullBody/EndEffector constructor (same path Kimodo's demo uses).\n    kf = node.parm(\"pose_keyframes\").eval().strip()\n    if len(ins) > 1 and ins[1] is not None and kf:\n        frames = [int(x) for x in kf.replace(\",\", \" \").split()]\n        m = node.type().hdaModule()\n        joints = list(m.SOMA77_JOINTS)\n        tp = np.asarray(m.TPOSE_ROTS, dtype=float).reshape(-1, 3, 3)\n        idx = {n: i for i, n in enumerate(joints)}\n        src = ins[1]\n        pos_kf, rot_kf, sr_kf = [], [], []\n        for f in frames:\n            g = src.geometryAtFrame(f)\n            if g.findPointAttrib(\"name\") is None:\n                raise ValueError(\"Pose input must be a SOMA77 skeleton with a `name` point attribute.\")\n            P = [None] * len(joints)\n            R = [None] * len(joints)\n            for pt in g.points():\n                nm = pt.attribValue(\"name\")\n                if nm not in idx:\n                    continue\n                i = idx[nm]\n                P[i] = [float(v) for v in pt.position()]\n                world = np.array(pt.attribValue(\"transform\"), dtype=float).reshape(3, 3).T\n                R[i] = (world @ tp[i].T).tolist()\n            if any(p is None for p in P):\n                missing = [joints[i] for i, p in enumerate(P) if p is None]\n                raise ValueError(\"Pose input missing SOMA77 joints: %s\" % \", \".join(missing[:5]))\n            pos_kf.append(P)\n            rot_kf.append(R)\n            hips = P[idx[\"Hips\"]]\n            sr_kf.append([hips[0], hips[2]])\n        is_ee = node.parm(\"pose_type\").evalAsString() == \"End-Effector\"\n        cdict = {\"frame_indices\": frames,\n                 \"global_joints_positions\": pos_kf,\n                 \"global_joints_rots\": rot_kf,\n                 \"smooth_root_2d\": sr_kf}\n        if is_ee:\n            names = [jn for parm, jn in ((\"ee_left_hand\", \"LeftHand\"), (\"ee_right_hand\", \"RightHand\"),\n                                         (\"ee_left_foot\", \"LeftFoot\"), (\"ee_right_foot\", \"RightFoot\"))\n                     if node.parm(parm).eval()]\n            if not names:\n                raise ValueError(\"End-Effector pose constraint: select at least one joint (hand/foot).\")\n            cdict[\"type\"] = \"ee-global\"\n            cdict[\"joint_names\"] = names\n        else:\n            cdict[\"type\"] = \"fullbody-global\"\n        constraints = (constraints or []) + [cdict]\n\n    resp = requests.post(\n        f\"{url}/generate\",\n        json={\n            \"prompt\":      node.parm(\"prompt\").eval(),\n            \"duration\":    node.parm(\"duration\").eval(),\n            \"model\":       node.parm(\"model\").evalAsString(),\n            \"force\":       bool(node.parm(\"force\").eval()),\n            \"constraints\": constraints,\n        },\n        timeout=30,\n    )\n    resp.raise_for_status()\nexcept Exception as e:\n    hou.ui.displayMessage(str(e), severity=hou.severityType.Error, title=\"Kimodo\")\n    node.parm(\"status\").set(f\"Error: {e}\")\nelse:\n    job_id = resp.json()[\"job_id\"]\n    node.parm(\"job_id\").set(job_id)\n    node.parm(\"status\").set(f\"Queued ({job_id[:8]}...)\")\n\n    def _poll():\n        # HOM/UI calls are not thread-safe: marshal them to the main thread.\n        import hdefereval, os\n        def _set(parm, val):\n            hdefereval.executeInMainThreadWithResult(lambda: node.parm(parm).set(val))\n        def _msg(text, severity=None):\n            if severity is None:\n                hdefereval.executeDeferred(lambda: hou.ui.displayMessage(text, title=\"Kimodo\"))\n            else:\n                hdefereval.executeDeferred(lambda: hou.ui.displayMessage(text, severity=severity, title=\"Kimodo\"))\n        fails = 0\n        while True:\n            time.sleep(5)\n            # stop if a newer Generate has replaced this job\n            if hdefereval.executeInMainThreadWithResult(lambda: node.parm(\"job_id\").eval()) != job_id:\n                break\n            try:\n                r = requests.get(f\"{url}/jobs/{job_id}\", timeout=10)\n                if r.status_code == 404:\n                    _set(\"status\", \"Job lost (server restarted?)\")\n                    _set(\"job_id\", \"\")\n                    break\n                r.raise_for_status()\n                data = r.json()\n                fails = 0\n            except Exception as e:\n                fails += 1\n                _set(\"status\", f\"Poll error ({fails}/3): {e}\")\n                if fails >= 3:\n                    break\n                continue\n            status  = data[\"status\"]\n            elapsed = data.get(\"elapsed\")\n            elapsed_str = f\" ({int(elapsed)}s)\" if elapsed else \"\"\n            if status == \"done\":\n                frames, joints = data[\"frames\"], data[\"joints\"]\n                done_label = f\"Done{elapsed_str}\" + (\" (cached)\" if data.get(\"cached\") else \"\")\n                try:\n                    _set(\"status\", f\"Downloading...{elapsed_str}\")\n                    os.makedirs(download_dir, exist_ok=True)\n                    local_npz = os.path.join(download_dir, f\"{job_id}.npz\")\n                    with requests.get(f\"{url}/jobs/{job_id}/download\", timeout=120, stream=True) as dl:\n                        dl.raise_for_status()\n                        with open(local_npz, \"wb\") as fh:\n                            for chunk in dl.iter_content(chunk_size=1 << 20):\n                                fh.write(chunk)\n                except Exception as e:\n                    _set(\"status\", f\"Download failed: {e}\")\n                    _msg(f\"NPZ download failed:\\n{e}\", severity=hou.severityType.Error)\n                    break\n                def _finish():\n                    node.parm(\"status\").set(done_label)\n                    node.parm(\"npz_path\").set(local_npz)\n                    node.parm(\"job_id\").set(\"\")\n                    node.cook(force=True)\n                hdefereval.executeInMainThreadWithResult(_finish)\n                _msg(f\"Generated {frames} frames ({joints} joints){elapsed_str}.\")\n                break\n            elif status in (\"failed\", \"cancelled\"):\n                err = data.get(\"error\")\n                _set(\"status\", f\"{status.capitalize()}: {err[:60]}\" if err else status.capitalize())\n                if status == \"failed\":\n                    _msg(f\"Generation failed:\\n{err}\", severity=hou.severityType.Error)\n                break\n            else:\n                _set(\"status\", f\"Running...{elapsed_str}\")\n\n    threading.Thread(target=_poll, daemon=True).start()\n    hou.ui.displayMessage(\n        \"Generation started in background.\\nHoudini will update automatically when done.\",\n        title=\"Kimodo\",\n    )\n" }
-        parmtag { "script_callback_language" "python" }
+
+        parm {
+            name    "prompt"
+            label   "Prompt"
+            type    string
+            default { "a person walks forward" }
+            help    "What the character does, in plain English. Be specific about body part, direction, speed and style. Examples:\n  a person walks forward slowly\n  someone jogs in a circle then stops\n  a person waves with the right hand, then bows\n  a tired person sits down on a chair"
+            parmtag { "editor" "1" }
+            parmtag { "editorlines" "4-8" }
+        }
+        parm {
+            name    "duration_frames"
+            label   "Duration (frames)"
+            type    integer
+            default { [ "3*$FPS" hscript-expr ] }
+            help    "Length of the clip in scene frames at the current $FPS. Converted to seconds for Kimodo, which generates at 30 fps; with Retime on you get back exactly this many frames."
+            range   { 12 720 }
+        }
+        parm {
+            name    "model"
+            label   "Model"
+            type    ordinal
+            default { "0" }
+            help    "Kimodo checkpoint. RP conditions on a rest pose; SEED uses a fixed seed for reproducible results."
+            menu {
+                "Kimodo-SOMA-RP-v1.1"   "Kimodo-SOMA-RP-v1.1"
+                "Kimodo-SOMA-SEED-v1.1" "Kimodo-SOMA-SEED-v1.1"
+                "Kimodo-SOMA-RP-v1"     "Kimodo-SOMA-RP-v1"
+            }
+        }
+        parm {
+            name    "generate"
+            label   "Generate"
+            type    button
+            joinnext
+            default { "0" }
+            help    "Send the prompt to the server. Runs in the background; the node recooks when the clip has downloaded."
+            parmtag { "script_callback" "\nimport json, threading, time, requests, hou\nimport numpy as np\n\nnode         = kwargs[\"node\"]\nurl          = node.parm(\"server_url\").eval().rstrip(\"/\")\ndownload_dir = node.parm(\"download_dir\").eval()\n# Duration is authored in scene frames; Kimodo wants seconds.\nduration_s   = node.parm(\"duration_frames\").eval() / hou.fps()\n\ntry:\n    # Optional Kimodo constraints: the inline JSON wins; otherwise read the file.\n    raw = node.parm(\"constraints_json\").eval().strip()\n    if not raw:\n        cfile = node.parm(\"constraints_file\").eval().strip()\n        raw = open(cfile, encoding=\"utf-8\").read() if cfile else \"\"\n    constraints = json.loads(raw) if raw else None\n    if constraints is not None and not isinstance(constraints, list):\n        raise ValueError(\"Constraints must be a JSON list of constraint dicts.\")\n\n    # Optional input geometry -> a root2d constraint. Houdini world XZ maps 1:1 to\n    # Kimodo's smooth_root_2d (same Y-up metric space the node outputs). Points with\n    # a `frame` int attribute become sparse waypoints (you control the timing);\n    # otherwise the points (in order, e.g. a polyline) are spread evenly over the\n    # clip as a denser path.\n    ins = node.inputs()\n    if ins and ins[0] is not None:\n        geo = node.inputGeometry(0)\n        pts = geo.points()\n        if pts:\n            xz = [[float(p.position()[0]), float(p.position()[2])] for p in pts]\n            if geo.findPointAttrib(\"frame\") is not None:\n                frames = [int(p.attribValue(\"frame\")) for p in pts]\n            elif len(pts) > 1:\n                # num_frames = int(duration * source_fps)  (clip samples, not scene frames)\n                T = max(2, int(duration_s * node.parm(\"source_fps\").eval()))\n                frames = [int(round(i * (T - 1) / (len(pts) - 1))) for i in range(len(pts))]\n            else:\n                frames = [0]\n            # dedup by frame (keep first), sort by frame\n            by_frame = {}\n            for f, c in zip(frames, xz):\n                by_frame.setdefault(f, c)\n            items = sorted(by_frame.items())\n            root2d = {\"type\": \"root2d\",\n                      \"frame_indices\": [f for f, _ in items],\n                      \"smooth_root_2d\": [c for _, c in items]}\n            constraints = (constraints or []) + [root2d]\n\n    # Optional posed-skeleton input (input 1) -> a full-body / end-effector constraint.\n    # Pose the node's own Capture Pose (A-pose) output with KineFX, keyframe it, and wire\n    # it back here. At each listed keyframe we read the posed joints and invert the cook's\n    # forward transform to recover Kimodo's global rotation: the cook stores\n    # transform = (grot @ tp).T, so grot = (transform.T) @ tp.T  (tp = TPOSE_ROTS).\n    # Positions are already Kimodo-global. The server builds the constraint via the\n    # FullBody/EndEffector constructor (same path Kimodo's demo uses).\n    kf = node.parm(\"pose_keyframes\").eval().strip()\n    if len(ins) > 1 and ins[1] is not None and kf:\n        frames = [int(x) for x in kf.replace(\",\", \" \").split()]\n        m = node.type().hdaModule()\n        joints = list(m.SOMA77_JOINTS)\n        tp = np.asarray(m.TPOSE_ROTS, dtype=float).reshape(-1, 3, 3)\n        idx = {n: i for i, n in enumerate(joints)}\n        src = ins[1]\n        pos_kf, rot_kf, sr_kf = [], [], []\n        for f in frames:\n            g = src.geometryAtFrame(f)\n            if g.findPointAttrib(\"name\") is None:\n                raise ValueError(\"Pose input must be a SOMA77 skeleton with a `name` point attribute.\")\n            P = [None] * len(joints)\n            R = [None] * len(joints)\n            for pt in g.points():\n                nm = pt.attribValue(\"name\")\n                if nm not in idx:\n                    continue\n                i = idx[nm]\n                P[i] = [float(v) for v in pt.position()]\n                world = np.array(pt.attribValue(\"transform\"), dtype=float).reshape(3, 3).T\n                R[i] = (world @ tp[i].T).tolist()\n            if any(p is None for p in P):\n                missing = [joints[i] for i, p in enumerate(P) if p is None]\n                raise ValueError(\"Pose input missing SOMA77 joints: %s\" % \", \".join(missing[:5]))\n            pos_kf.append(P)\n            rot_kf.append(R)\n            hips = P[idx[\"Hips\"]]\n            sr_kf.append([hips[0], hips[2]])\n        is_ee = node.parm(\"pose_type\").evalAsString() == \"End-Effector\"\n        cdict = {\"frame_indices\": frames,\n                 \"global_joints_positions\": pos_kf,\n                 \"global_joints_rots\": rot_kf,\n                 \"smooth_root_2d\": sr_kf}\n        if is_ee:\n            names = [jn for parm, jn in ((\"ee_left_hand\", \"LeftHand\"), (\"ee_right_hand\", \"RightHand\"),\n                                         (\"ee_left_foot\", \"LeftFoot\"), (\"ee_right_foot\", \"RightFoot\"))\n                     if node.parm(parm).eval()]\n            if not names:\n                raise ValueError(\"End-Effector pose constraint: select at least one joint (hand/foot).\")\n            cdict[\"type\"] = \"ee-global\"\n            cdict[\"joint_names\"] = names\n        else:\n            cdict[\"type\"] = \"fullbody-global\"\n        constraints = (constraints or []) + [cdict]\n\n    resp = requests.post(\n        f\"{url}/generate\",\n        json={\n            \"prompt\":      node.parm(\"prompt\").eval().strip(),\n            \"duration\":    duration_s,\n            \"model\":       node.parm(\"model\").evalAsString(),\n            \"force\":       bool(node.parm(\"force\").eval()),\n            \"constraints\": constraints,\n        },\n        timeout=30,\n    )\n    resp.raise_for_status()\nexcept Exception as e:\n    hou.ui.displayMessage(str(e), severity=hou.severityType.Error, title=\"Kimodo\")\n    node.parm(\"status\").set(f\"Error: {e}\")\nelse:\n    job_id = resp.json()[\"job_id\"]\n    node.parm(\"job_id\").set(job_id)\n    node.parm(\"status\").set(f\"Queued ({job_id[:8]}...)\")\n    hou.ui.setStatusMessage(\"Kimodo: generation started, watch the node's Status field.\",\n                            severity=hou.severityType.ImportantMessage)\n\n    def _poll():\n        # HOM/UI calls are not thread-safe: marshal them to the main thread.\n        import hdefereval, os\n        def _set(parm, val):\n            hdefereval.executeInMainThreadWithResult(lambda: node.parm(parm).set(val))\n        def _msg(text, severity=None):\n            if severity is None:\n                hdefereval.executeDeferred(lambda: hou.ui.displayMessage(text, title=\"Kimodo\"))\n            else:\n                hdefereval.executeDeferred(lambda: hou.ui.displayMessage(text, severity=severity, title=\"Kimodo\"))\n        def _statusbar(text, severity=hou.severityType.ImportantMessage):\n            hdefereval.executeDeferred(lambda: hou.ui.setStatusMessage(text, severity=severity))\n        fails = 0\n        while True:\n            time.sleep(5)\n            # stop if a newer Generate has replaced this job\n            if hdefereval.executeInMainThreadWithResult(lambda: node.parm(\"job_id\").eval()) != job_id:\n                break\n            try:\n                r = requests.get(f\"{url}/jobs/{job_id}\", timeout=10)\n                if r.status_code == 404:\n                    _set(\"status\", \"Job lost (server restarted?)\")\n                    _set(\"job_id\", \"\")\n                    break\n                r.raise_for_status()\n                data = r.json()\n                fails = 0\n            except Exception as e:\n                fails += 1\n                _set(\"status\", f\"Poll error ({fails}/3): {e}\")\n                if fails >= 3:\n                    break\n                continue\n            status  = data[\"status\"]\n            elapsed = data.get(\"elapsed\")\n            elapsed_str = f\" ({int(elapsed)}s)\" if elapsed else \"\"\n            if status == \"done\":\n                frames, joints = data[\"frames\"], data[\"joints\"]\n                done_label = f\"Done{elapsed_str}\" + (\" (cached)\" if data.get(\"cached\") else \"\")\n                try:\n                    _set(\"status\", f\"Downloading...{elapsed_str}\")\n                    os.makedirs(download_dir, exist_ok=True)\n                    local_npz = os.path.join(download_dir, f\"{job_id}.npz\")\n                    with requests.get(f\"{url}/jobs/{job_id}/download\", timeout=120, stream=True) as dl:\n                        dl.raise_for_status()\n                        with open(local_npz, \"wb\") as fh:\n                            for chunk in dl.iter_content(chunk_size=1 << 20):\n                                fh.write(chunk)\n                except Exception as e:\n                    _set(\"status\", f\"Download failed: {e}\")\n                    _msg(f\"NPZ download failed:\\n{e}\", severity=hou.severityType.Error)\n                    break\n                def _finish():\n                    fps = node.parm(\"source_fps\").eval() or 30\n                    secs = frames / fps\n                    node.parm(\"status\").set(done_label)\n                    node.parm(\"clip_info\").set(\n                        f\"{secs:.2f} s = {round(secs * hou.fps())} frames @ {hou.fps():g} fps \"\n                        f\"({frames} samples @ {fps} fps)\")\n                    node.parm(\"npz_path\").set(local_npz)\n                    node.parm(\"job_id\").set(\"\")\n                    node.cook(force=True)\n                hdefereval.executeInMainThreadWithResult(_finish)\n                _statusbar(f\"Kimodo: generated {frames} frames ({joints} joints){elapsed_str}.\")\n                break\n            elif status in (\"failed\", \"cancelled\"):\n                err = data.get(\"error\")\n                _set(\"status\", f\"{status.capitalize()}: {err[:60]}\" if err else status.capitalize())\n                if status == \"failed\":\n                    _msg(f\"Generation failed:\\n{err}\", severity=hou.severityType.Error)\n                break\n            else:\n                _set(\"status\", f\"Running...{elapsed_str}\")\n\n    threading.Thread(target=_poll, daemon=True).start()\n" }
+            parmtag { "script_callback_language" "python" }
+        }
+        parm {
+            name    "cancel"
+            label   "Cancel"
+            type    button
+            joinnext
+            default { "0" }
+            help    "Cancel the queued job or discard the running one."
+            parmtag { "script_callback" "\nimport requests, hou\n\nnode   = kwargs[\"node\"]\nurl    = node.parm(\"server_url\").eval().rstrip(\"/\")\njob_id = node.parm(\"job_id\").eval()\nif not job_id:\n    hou.ui.setStatusMessage(\"Kimodo: no active job to cancel.\", severity=hou.severityType.Warning)\nelse:\n    try:\n        r = requests.post(f\"{url}/jobs/{job_id}/cancel\", timeout=10)\n        r.raise_for_status()\n    except Exception as e:\n        hou.ui.displayMessage(str(e), severity=hou.severityType.Error, title=\"Kimodo\")\n    else:\n        node.parm(\"status\").set(\"Cancelled\")\n        node.parm(\"job_id\").set(\"\")\n" }
+            parmtag { "script_callback_language" "python" }
+        }
+        parm {
+            name    "force"
+            label   "Force Regenerate"
+            type    toggle
+            default { "0" }
+            help    "Bypass the server cache and run inference again even if an identical prompt, duration, model and constraints were generated before."
+        }
+        parm {
+            name    "status"
+            label   "Status"
+            type    string
+            default { "" }
+            help    "Live job state: Queued, Running (Ns), Downloading, Done (Ns), Failed, Cancelled."
+            disablewhen "{ status != __never__ }"
+        }
+        parm {
+            name    "clip_info"
+            label   "Clip"
+            type    string
+            default { "" }
+            help    "Length of the last generated clip in samples and seconds."
+            disablewhen "{ status != __never__ }"
+        }
     }
-    parm {
-        name    "cancel"
-        label   "Cancel"
-        type    button
-        default { "0" }
-        parmtag { "script_callback" "\nimport requests, hou\n\nnode   = kwargs[\"node\"]\nurl    = node.parm(\"server_url\").eval().rstrip(\"/\")\njob_id = node.parm(\"job_id\").eval()\nif not job_id:\n    hou.ui.displayMessage(\"No active job to cancel.\", title=\"Kimodo\")\nelse:\n    try:\n        r = requests.post(f\"{url}/jobs/{job_id}/cancel\", timeout=10)\n        r.raise_for_status()\n    except Exception as e:\n        hou.ui.displayMessage(str(e), severity=hou.severityType.Error, title=\"Kimodo\")\n    else:\n        node.parm(\"status\").set(\"Cancelled\")\n        node.parm(\"job_id\").set(\"\")\n" }
-        parmtag { "script_callback_language" "python" }
+
+    group {
+        name    "fld_constraints"
+        label   "Constraints"
+
+        groupcollapsible {
+            name    "grp_json"
+            label   "Constraints JSON"
+            parmtag { "group_default" "0" }
+
+            parm {
+                name    "constraints_file"
+                label   "Constraints File"
+                type    file
+                default { "" }
+                help    "Optional Kimodo constraints JSON (e.g. exported from the Kimodo demo). Ignored when Constraints JSON below is non-empty."
+                parmtag { "filechooser_pattern" "*.json" }
+            }
+            parm {
+                name    "constraints_json"
+                label   "Constraints JSON"
+                type    string
+                default { "" }
+                help    "Optional inline Kimodo constraints JSON (a list of constraint dicts). Takes precedence over Constraints File. Example root path:\n[{\"type\": \"root2d\", \"frame_indices\": [0, 90], \"smooth_root_2d\": [[0,0],[2,1]]}]"
+                parmtag { "editor" "1" }
+                parmtag { "editorlines" "3-8" }
+            }
+        }
+
+        groupcollapsible {
+            name    "grp_pose"
+            label   "Pose Keyframes (input 1)"
+            parmtag { "group_default" "1" }
+
+            parm {
+                name    "make_pose_rig"
+                label   "Create Pose Rig"
+                type    button
+                default { "0" }
+                help    "Drop an independent A-pose rig (+ Rig Pose) into the network and wire it to input 1. Pose / keyframe it to author full-body / end-effector constraints."
+                parmtag { "script_callback" "\nimport hou\n\nnode = kwargs[\"node\"]\nparent = node.parent()\nloader = (\n    \"import os, base64, tempfile, hou\\n\"\n    \"hda = hou.nodeType(hou.sopNodeTypeCategory(), %r).definition()\\n\"\n    \"data = base64.b64decode(hda.sections()['apose.bgeo.sc'].contents())\\n\"\n    \"fd, p = tempfile.mkstemp(prefix='kimodo_', suffix='_apose.bgeo.sc'); os.close(fd)\\n\"\n    \"try:\\n\"\n    \"    open(p, 'wb').write(data)\\n\"\n    \"    hou.pwd().geometry().loadFromFile(p)\\n\"\n    \"finally:\\n\"\n    \"    try: os.remove(p)\\n\"\n    \"    except OSError: pass\\n\"\n) % node.type().name()\n\nrig = parent.createNode(\"python\", \"kimodo_pose_rig\")\nrig.parm(\"python\").set(loader)\ntry:\n    tip = parent.createNode(\"kinefx::rigpose\", \"pose_keyframes\")\n    tip.setInput(0, rig)\nexcept hou.OperationFailed:\n    tip = rig\nrig.moveToGoodPosition()\nif tip is not rig:\n    tip.moveToGoodPosition()\nwired = node.input(1) is None\nif wired:\n    node.setInput(1, tip)\ntip.setCurrent(True, clear_all_selected=True)\nhou.ui.displayMessage(\n    \"Created an independent A-pose rig%s.\\n\\nPose / keyframe it, set Pose Keyframes, choose \"\n    \"Full-Body or End-Effector, then Generate.%s\" % (\n        \" + Rig Pose\" if tip is not rig else \"\",\n        \"\" if wired else \"\\n\\nWire it into this node's input 1.\",\n    ),\n    title=\"Kimodo\",\n)\n" }
+                parmtag { "script_callback_language" "python" }
+            }
+            parm {
+                name    "pose_keyframes"
+                label   "Pose Keyframes"
+                type    string
+                default { "" }
+                help    "Frame numbers to sample the input-1 skeleton at, e.g. `0 45 89`. Empty = no pose constraint."
+            }
+            parm {
+                name    "pose_type"
+                label   "Pose Constraint"
+                type    ordinal
+                default { "0" }
+                help    "How to use the posed skeleton on input 1: constrain the whole body, or only the selected hands/feet."
+                disablewhen "{ pose_keyframes == \"\" }"
+                menu {
+                    "Full-Body"     "Full-Body"
+                    "End-Effector"  "End-Effector"
+                }
+            }
+            parm {
+                name    "ee_left_hand"
+                label   "Left Hand"
+                type    toggle
+                joinnext
+                default { "0" }
+                disablewhen "{ pose_type != End-Effector } { pose_keyframes == \"\" }"
+            }
+            parm {
+                name    "ee_right_hand"
+                label   "Right Hand"
+                type    toggle
+                default { "1" }
+                disablewhen "{ pose_type != End-Effector } { pose_keyframes == \"\" }"
+            }
+            parm {
+                name    "ee_left_foot"
+                label   "Left Foot"
+                type    toggle
+                joinnext
+                default { "0" }
+                disablewhen "{ pose_type != End-Effector } { pose_keyframes == \"\" }"
+            }
+            parm {
+                name    "ee_right_foot"
+                label   "Right Foot"
+                type    toggle
+                default { "0" }
+                disablewhen "{ pose_type != End-Effector } { pose_keyframes == \"\" }"
+            }
+        }
+
     }
-    parm {
-        name    "status"
-        label   "Status"
-        type    string
-        default { "" }
-        help    "Current job status. Updated automatically by Generate."
+
+    group {
+        name    "fld_output"
+        label   "Output"
+
+        parm {
+            name    "start_frame"
+            label   "Start Frame"
+            type    integer
+            default { [ "$FSTART" hscript-expr ] }
+            help    "Scene frame on which the clip begins. The first sample holds before it, the last sample holds after the clip ends."
+            range   { -1000 1000 }
+        }
+        parm {
+            name    "npz_path"
+            label   "NPZ Path"
+            type    file
+            default { "" }
+            help    "The clip the node reads. Set by Generate, or point it at any compatible Kimodo NPZ by hand (no server needed)."
+            parmtag { "filechooser_pattern" "*.npz" }
+        }
+        groupcollapsible {
+            name    "grp_advanced"
+            label   "Advanced"
+            parmtag { "group_default" "0" }
+
+            parm {
+                name    "retime"
+                label   "Retime to Scene FPS"
+                type    toggle
+                default { "1" }
+                help    "Map clip samples onto scene frames so the clip keeps its real duration at any $FPS (nearest sample, no blending). Off = one clip sample per scene frame, so a 30 fps clip plays slow at 24 fps."
+            }
+            parm {
+                name    "source_fps"
+                label   "Clip FPS"
+                type    integer
+                default { "30" }
+                help    "Frame rate Kimodo generated the clip at: 30 for the SOMA models. This is a property of the model, not of your scene; do not set it to $FPS or Retime becomes a no-op."
+                range   { 1 120 }
+            }
+        }
+
     }
+
+    group {
+        name    "fld_server"
+        label   "Server"
+
+        parm {
+            name    "server_url"
+            label   "API Server URL"
+            type    string
+            joinnext
+            default { "http://localhost:8001" }
+            help    "URL of the running kimodo_server. Point at the GPU host if it runs elsewhere."
+        }
+        parm {
+            name    "test_connection"
+            label   "Test Connection"
+            type    button
+            default { "0" }
+            help    "Ping the server's /health endpoint and report in Status."
+            parmtag { "script_callback" "\nimport requests, hou\n\nnode = kwargs[\"node\"]\nurl  = node.parm(\"server_url\").eval().rstrip(\"/\")\ntry:\n    r = requests.get(f\"{url}/health\", timeout=5)\n    r.raise_for_status()\n    d = r.json()\n    msg = \"Server OK\" + (\" (mock mode, no inference)\" if d.get(\"mock_mode\") else \"\")\n    sev = hou.severityType.ImportantMessage\nexcept Exception as e:\n    msg = f\"Server unreachable: {e}\"\n    sev = hou.severityType.Error\nnode.parm(\"status\").set(msg)\nhou.ui.setStatusMessage(\"Kimodo: \" + msg, severity=sev)\n" }
+            parmtag { "script_callback_language" "python" }
+        }
+        parm {
+            name    "download_dir"
+            label   "Download Dir"
+            type    directory
+            default { "$HIP/kimodo_cache" }
+            help    "Local folder where generated NPZ files are downloaded from the server."
+        }
+    }
+
     parm {
         name    "job_id"
         label   "Job ID"
@@ -194,18 +278,5 @@
         invisible
         default { [ "$F" hscript-expr ] }
         range   { 0 10 }
-    }
-    parm {
-        name    "sep_npz"
-        label   ""
-        type    separator
-        default { "" }
-    }
-    parm {
-        name    "npz_path"
-        label   "NPZ Path"
-        type    file
-        default { "" }
-        parmtag { "filechooser_pattern" "*.npz" }
     }
 }

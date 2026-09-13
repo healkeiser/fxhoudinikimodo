@@ -7,6 +7,7 @@ Usage:
 Output: kimodo_motion.hda in the repo root.
 """
 import os
+import re
 import sys
 import hou
 
@@ -15,9 +16,15 @@ _REPO     = os.path.dirname(_HERE)
 _HDA_PATH = os.path.join(_REPO, "kimodo_motion.hda")
 
 # Embedded geometry built by scripts/build_skin.py (run it first). When present,
-# the HDA gains the A-pose skeleton (output1) and skin mesh (output2).
+# the HDA gains the skin mesh (output 0) and the A-pose skeleton (output 1).
 _SKIN_BGEO  = os.path.join(_REPO, "skin.bgeo.sc")
 _APOSE_BGEO = os.path.join(_REPO, "apose.bgeo.sc")
+
+# Kimodo SOMA models generate at this rate; exposed as the Source FPS parm default.
+_KIMODO_FPS = 30
+
+# Node icon (embedded into the HDA as its IconSVG section).
+_ICON_SVG = os.path.join(_HERE, "kimodo_icon.svg")
 
 
 def _skin_sections():
@@ -71,8 +78,15 @@ def _cook():
     global_rots = data["global_rot_mats"] # (T, 77, 3, 3) world rotations
     T           = posed.shape[0]
 
-    frame = hda_node.parm("frame_ref").eval() - 1
-    frame = max(0, min(frame, T - 1))
+    # Which clip sample to show. The clip starts on Start Frame; with Retime on, scene
+    # frames are mapped onto clip samples (Source FPS / scene FPS) so a 3 s clip lasts
+    # 3 s at any $FPS. Before the start the first sample holds, after the end the last.
+    # ponytail: nearest sample, no blending; kinefx::motionclip + Motion Clip Retime
+    # downstream if sub-frame interpolation is ever needed.
+    f = hda_node.parm("frame_ref").eval() - hda_node.parm("start_frame").eval()
+    if hda_node.parm("retime").eval():
+        f = f * hda_node.parm("source_fps").eval() / hou.fps()
+    frame = max(0, min(int(round(f)), T - 1))
 
     pos  = posed[frame]
     grot = global_rots[frame]
@@ -94,8 +108,8 @@ def _cook():
 
     # Kimodo global_rot_mats are column-vector and world-axis-aligned at rest;
     # the T-pose offsets re-align each joint frame to its bone, so right-multiplying
-    # gives a bone-aligned world orientation matching output1. Houdini KineFX is
-    # row-vector / row-major, so we transpose; translation goes in the last row.
+    # gives a bone-aligned world orientation matching the T-Pose output. Houdini KineFX
+    # is row-vector / row-major, so we transpose; translation goes in the last row.
     tp = np.asarray(TPOSE_ROTS, dtype=float).reshape(-1, 3, 3)
     world_rot = [grot[i] @ tp[i] for i in range(len(SOMA77_JOINTS))]
     world_m = []
@@ -146,6 +160,8 @@ import numpy as np
 node         = kwargs["node"]
 url          = node.parm("server_url").eval().rstrip("/")
 download_dir = node.parm("download_dir").eval()
+# Duration is authored in scene frames; Kimodo wants seconds.
+duration_s   = node.parm("duration_frames").eval() / hou.fps()
 
 try:
     # Optional Kimodo constraints: the inline JSON wins; otherwise read the file.
@@ -171,8 +187,8 @@ try:
             if geo.findPointAttrib("frame") is not None:
                 frames = [int(p.attribValue("frame")) for p in pts]
             elif len(pts) > 1:
-                # SOMA models run at 30 fps: num_frames = int(duration * 30)
-                T = max(2, int(node.parm("duration").eval() * 30))
+                # num_frames = int(duration * source_fps)  (clip samples, not scene frames)
+                T = max(2, int(duration_s * node.parm("source_fps").eval()))
                 frames = [int(round(i * (T - 1) / (len(pts) - 1))) for i in range(len(pts))]
             else:
                 frames = [0]
@@ -243,8 +259,8 @@ try:
     resp = requests.post(
         f"{url}/generate",
         json={
-            "prompt":      node.parm("prompt").eval(),
-            "duration":    node.parm("duration").eval(),
+            "prompt":      node.parm("prompt").eval().strip(),
+            "duration":    duration_s,
             "model":       node.parm("model").evalAsString(),
             "force":       bool(node.parm("force").eval()),
             "constraints": constraints,
@@ -259,6 +275,8 @@ else:
     job_id = resp.json()["job_id"]
     node.parm("job_id").set(job_id)
     node.parm("status").set(f"Queued ({job_id[:8]}...)")
+    hou.ui.setStatusMessage("Kimodo: generation started, watch the node's Status field.",
+                            severity=hou.severityType.ImportantMessage)
 
     def _poll():
         # HOM/UI calls are not thread-safe: marshal them to the main thread.
@@ -270,6 +288,8 @@ else:
                 hdefereval.executeDeferred(lambda: hou.ui.displayMessage(text, title="Kimodo"))
             else:
                 hdefereval.executeDeferred(lambda: hou.ui.displayMessage(text, severity=severity, title="Kimodo"))
+        def _statusbar(text, severity=hou.severityType.ImportantMessage):
+            hdefereval.executeDeferred(lambda: hou.ui.setStatusMessage(text, severity=severity))
         fails = 0
         while True:
             time.sleep(5)
@@ -311,12 +331,17 @@ else:
                     _msg(f"NPZ download failed:\n{e}", severity=hou.severityType.Error)
                     break
                 def _finish():
+                    fps = node.parm("source_fps").eval() or 30
+                    secs = frames / fps
                     node.parm("status").set(done_label)
+                    node.parm("clip_info").set(
+                        f"{secs:.2f} s = {round(secs * hou.fps())} frames @ {hou.fps():g} fps "
+                        f"({frames} samples @ {fps} fps)")
                     node.parm("npz_path").set(local_npz)
                     node.parm("job_id").set("")
                     node.cook(force=True)
                 hdefereval.executeInMainThreadWithResult(_finish)
-                _msg(f"Generated {frames} frames ({joints} joints){elapsed_str}.")
+                _statusbar(f"Kimodo: generated {frames} frames ({joints} joints){elapsed_str}.")
                 break
             elif status in ("failed", "cancelled"):
                 err = data.get("error")
@@ -328,10 +353,6 @@ else:
                 _set("status", f"Running...{elapsed_str}")
 
     threading.Thread(target=_poll, daemon=True).start()
-    hou.ui.displayMessage(
-        "Generation started in background.\nHoudini will update automatically when done.",
-        title="Kimodo",
-    )
 """
 
 # Cancel is identical for both HDAs (same server endpoint).
@@ -342,7 +363,7 @@ node   = kwargs["node"]
 url    = node.parm("server_url").eval().rstrip("/")
 job_id = node.parm("job_id").eval()
 if not job_id:
-    hou.ui.displayMessage("No active job to cancel.", title="Kimodo")
+    hou.ui.setStatusMessage("Kimodo: no active job to cancel.", severity=hou.severityType.Warning)
 else:
     try:
         r = requests.post(f"{url}/jobs/{job_id}/cancel", timeout=10)
@@ -352,6 +373,25 @@ else:
     else:
         node.parm("status").set("Cancelled")
         node.parm("job_id").set("")
+"""
+
+# Test Connection: one GET on /health, result into Status and the status bar.
+_TEST_CB = r"""
+import requests, hou
+
+node = kwargs["node"]
+url  = node.parm("server_url").eval().rstrip("/")
+try:
+    r = requests.get(f"{url}/health", timeout=5)
+    r.raise_for_status()
+    d = r.json()
+    msg = "Server OK" + (" (mock mode, no inference)" if d.get("mock_mode") else "")
+    sev = hou.severityType.ImportantMessage
+except Exception as e:
+    msg = f"Server unreachable: {e}"
+    sev = hou.severityType.Error
+node.parm("status").set(msg)
+hou.ui.setStatusMessage("Kimodo: " + msg, severity=sev)
 """
 
 # Build a standalone A-pose rig to pose for full-body / end-effector constraints.
@@ -449,14 +489,31 @@ finally:
         pass
 '''
 
+# Runs when a node of this type is created: colour + shape so it reads as a generator.
+_ON_CREATED = r"""
+node = kwargs["node"]
+node.setColor(hou.Color((0.46, 0.73, 0.35)))
+node.setUserData("nodeshape", "bulge")
+"""
+
+_PROMPT_HELP = (
+    "What the character does, in plain English. Be specific about body part, "
+    "direction, speed and style. Examples:\n"
+    "  a person walks forward slowly\n"
+    "  someone jogs in a circle then stops\n"
+    "  a person waves with the right hand, then bows\n"
+    "  a tired person sits down on a chair"
+)
+
 
 def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None):
     """Build the kimodo_motion HDA.
 
-    skin_sections: optional {section_name: bytes}. When given, the HDA gets four
-      outputs (0 animated, 1 A-pose rest skeleton, 2 skin mesh, 3 T-pose) with the
-      skeleton/mesh geometry embedded as sections. When None, two outputs
-      (0 animated, 1 T-pose).
+    Output order follows SideFX's character/test-geometry nodes so a Joint Deform wires
+    straight across (0 -> 0, 1 -> 1, 2 -> 2):
+      0 Rest Geometry (skin mesh)   1 Capture Pose (A-pose)   2 Animated Pose   3 T-Pose
+    skin_sections: {section_name: bytes} from build_skin.py. When None, only
+    Animated Pose (0) and T-Pose (1) are produced.
     """
     obj = hou.node("/obj")
     geo = obj.createNode("geo", node_name + "_setup")
@@ -466,38 +523,34 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
 
     # Both cook scripts read the SOMA77 data from the HDA's PythonModule section
     # (added below) via hou.pwd().parent().type().hdaModule() — single source.
-    inner = subnet.createNode("python", "gen_sop")
-    inner.parm("python").set(_COOK_SCRIPT)
-    rest_sop = subnet.createNode("python", "rest_sop")
-    rest_sop.parm("python").set(_REST_SCRIPT)
+    anim_sop = subnet.createNode("python", "animated_sop")
+    anim_sop.parm("python").set(_COOK_SCRIPT)
+    tpose_sop = subnet.createNode("python", "tpose_sop")
+    tpose_sop.parm("python").set(_REST_SCRIPT)
 
-    out0 = subnet.createNode("output", "output0")
-    out0.setInput(0, inner)
-    out0.parm("outputidx").set(0)
+    def _out(idx, src):
+        o = subnet.createNode("output", "output%d" % idx)
+        o.setInput(0, src)
+        o.parm("outputidx").set(idx)
+        return o
 
     if skin_sections:
-        apose_sop = subnet.createNode("python", "apose_sop")
-        apose_sop.parm("python").set(_SECTION_LOADER % "apose.bgeo.sc")
         skin_sop = subnet.createNode("python", "skin_sop")
         skin_sop.parm("python").set(_SECTION_LOADER % "skin.bgeo.sc")
-        out1 = subnet.createNode("output", "output1")
-        out1.setInput(0, apose_sop)
-        out1.parm("outputidx").set(1)
-        out2 = subnet.createNode("output", "output2")
-        out2.setInput(0, skin_sop)
-        out2.parm("outputidx").set(2)
-        out3 = subnet.createNode("output", "output3")
-        out3.setInput(0, rest_sop)
-        out3.parm("outputidx").set(3)
-        n_outputs = 4
+        apose_sop = subnet.createNode("python", "apose_sop")
+        apose_sop.parm("python").set(_SECTION_LOADER % "apose.bgeo.sc")
+        first = _out(0, skin_sop)
+        _out(1, apose_sop)
+        _out(2, anim_sop)
+        _out(3, tpose_sop)
+        labels = ["Rest Geometry", "Capture Pose", "Animated Pose", "T-Pose"]
     else:
-        out1 = subnet.createNode("output", "output1")
-        out1.setInput(0, rest_sop)
-        out1.parm("outputidx").set(1)
-        n_outputs = 2
+        first = _out(0, anim_sop)
+        _out(1, tpose_sop)
+        labels = ["Animated Pose", "T-Pose"]
 
-    out0.setDisplayFlag(True)
-    out0.setRenderFlag(True)
+    first.setDisplayFlag(True)
+    first.setRenderFlag(True)
     subnet.layoutChildren()
 
     hda_node = subnet.createDigitalAsset(
@@ -506,50 +559,100 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
         description=description,
         min_num_inputs=0,
         max_num_inputs=2,   # input 0: geometry -> root2d; input 1: posed skeleton -> fullbody/EE
-        version="1.0",
+        version="1.1",
     )
     hda_def = hda_node.type().definition()
-    hda_def.setMaxNumOutputs(n_outputs)
+    hda_def.setMaxNumOutputs(len(labels))
+    # Node icon: the SVG in scripts/kimodo_icon.svg, embedded as the IconSVG section.
+    hda_def.addSection("IconSVG", open(_ICON_SVG, encoding="utf-8").read())
+    hda_def.setIcon("opdef:/Sop/%s?IconSVG" % node_name)
     hda_def.addSection("PythonModule", _MODULE_SRC)   # SOMA77 data for the cook scripts
+    hda_def.addSection("OnCreated", _ON_CREATED)
+    hda_def.setExtraFileOption("OnCreated/IsPython", True)
+    # Shown under the node in the network editor (Type Properties > Node > Descriptive Parm).
+    hda_def.addSection("DescriptiveParmName", "status")
     if skin_sections:
         # Store the binary bgeo as base64 text so the section round-trips cleanly
         # (HDASection.contents() returns str; raw bytes don't survive that).
         import base64
         for sname, data in skin_sections.items():
             hda_def.addSection(sname, base64.b64encode(data).decode("ascii"))
-    ptg = hou.ParmTemplateGroup()   # start fresh — no inherited subnet parms
 
-    ptg.append(hou.SeparatorParmTemplate("sep_api"))
-    ptg.append(hou.StringParmTemplate(
-        "server_url", "API Server URL", 1,
-        default_value=("http://localhost:8001",),
-    ))
-    ptg.append(hou.StringParmTemplate(
-        "download_dir", "Download Dir", 1,
-        default_value=("$HIP/kimodo_cache",),
-        help="Local folder where generated NPZ files are downloaded from the server.",
-    ))
-    ptg.append(hou.SeparatorParmTemplate("sep_gen"))
-    ptg.append(hou.StringParmTemplate(
+    # Tab menu: Kimodo instead of the generic "Digital Assets" submenu.
+    shelf = hda_def.sections().get("Tools.shelf")
+    if shelf is not None:
+        xml = re.sub(r"<toolSubmenu>.*?</toolSubmenu>", "<toolSubmenu>Kimodo</toolSubmenu>",
+                     shelf.contents(), count=1)
+        hda_def.addSection("Tools.shelf", xml)
+
+    # ── parameter interface ──────────────────────────────────────────────────
+    ptg = hou.ParmTemplateGroup()   # start fresh — no inherited subnet parms
+    always_off = '{ status != "__never__" }'   # disablewhen that is always true: read-only field
+
+    # Tab: Generate — the everyday controls.
+    gen = hou.FolderParmTemplate("fld_generate", "Generate", folder_type=hou.folderType.Tabs)
+    gen.addParmTemplate(hou.StringParmTemplate(
         "prompt", "Prompt", 1,
         default_value=("a person walks forward",),
+        tags={"editor": "1", "editorlines": "4-8"},
+        help=_PROMPT_HELP,
     ))
-    ptg.append(hou.FloatParmTemplate(
-        "duration", "Duration (s)", 1,
-        default_value=(3.0,), min=0.5, max=30.0,
+    gen.addParmTemplate(hou.IntParmTemplate(
+        "duration_frames", "Duration (frames)", 1,
+        default_expression=("3*$FPS",),
+        default_expression_language=(hou.scriptLanguage.Hscript,),
+        min=12, max=720, min_is_strict=False, max_is_strict=False,
+        help="Length of the clip in scene frames at the current $FPS. Converted to seconds for "
+             "Kimodo, which generates at 30 fps; with Retime on you get back exactly this many frames.",
     ))
-    ptg.append(hou.MenuParmTemplate(
+    gen.addParmTemplate(hou.MenuParmTemplate(
         "model", "Model",
         ("Kimodo-SOMA-RP-v1.1", "Kimodo-SOMA-SEED-v1.1", "Kimodo-SOMA-RP-v1"),
         default_value=0,
+        help="Kimodo checkpoint. RP conditions on a rest pose; SEED uses a fixed seed for "
+             "reproducible results.",
     ))
-    ptg.append(hou.ToggleParmTemplate(
+    gen.addParmTemplate(hou.ButtonParmTemplate(
+        "generate", "Generate",
+        script_callback=generate_cb,
+        script_callback_language=hou.scriptLanguage.Python,
+        join_with_next=True,
+        help="Send the prompt to the server. Runs in the background; the node recooks when "
+             "the clip has downloaded.",
+    ))
+    gen.addParmTemplate(hou.ButtonParmTemplate(
+        "cancel", "Cancel",
+        script_callback=_CANCEL_CB,
+        script_callback_language=hou.scriptLanguage.Python,
+        join_with_next=True,
+        help="Cancel the queued job or discard the running one.",
+    ))
+    gen.addParmTemplate(hou.ToggleParmTemplate(
         "force", "Force Regenerate",
         default_value=False,
-        help="Bypass the server cache and re-run inference even if a matching clip exists.",
+        help="Bypass the server cache and run inference again even if an identical prompt, "
+             "duration, model and constraints were generated before.",
     ))
-    ptg.append(hou.SeparatorParmTemplate("sep_constraints"))
-    ptg.append(hou.StringParmTemplate(
+    gen.addParmTemplate(hou.StringParmTemplate(
+        "status", "Status", 1,
+        default_value=("",),
+        disable_when=always_off,
+        help="Live job state: Queued, Running (Ns), Downloading, Done (Ns), Failed, Cancelled.",
+    ))
+    gen.addParmTemplate(hou.StringParmTemplate(
+        "clip_info", "Clip", 1,
+        default_value=("",),
+        disable_when=always_off,
+        help="Length of the last generated clip in samples and seconds.",
+    ))
+    ptg.append(gen)
+
+    # Tab: Constraints — optional steering.
+    con = hou.FolderParmTemplate("fld_constraints", "Constraints", folder_type=hou.folderType.Tabs)
+    # Collapsible groups instead of separators; group_default 1 = open, 0 = closed on creation.
+    js = hou.FolderParmTemplate("grp_json", "Constraints JSON", folder_type=hou.folderType.Collapsible,
+                                tags={"group_default": "0"})
+    js.addParmTemplate(hou.StringParmTemplate(
         "constraints_file", "Constraints File", 1,
         default_value=("",),
         string_type=hou.stringParmType.FileReference,
@@ -558,73 +661,118 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
         help="Optional Kimodo constraints JSON (e.g. exported from the Kimodo demo). "
              "Ignored when Constraints JSON below is non-empty.",
     ))
-    ptg.append(hou.StringParmTemplate(
+    js.addParmTemplate(hou.StringParmTemplate(
         "constraints_json", "Constraints JSON", 1,
         default_value=("",),
-        tags={"editor": "1"},
+        tags={"editor": "1", "editorlines": "3-8"},
         help="Optional inline Kimodo constraints JSON (a list of constraint dicts). "
-             "Takes precedence over Constraints File.",
+             "Takes precedence over Constraints File. Example root path:\n"
+             '[{"type": "root2d", "frame_indices": [0, 90], "smooth_root_2d": [[0,0],[2,1]]}]',
     ))
-    ptg.append(hou.SeparatorParmTemplate("sep_pose"))
-    ptg.append(hou.MenuParmTemplate(
-        "pose_type", "Pose Constraint",
-        ("Full-Body", "End-Effector"),
-        default_value=0,
-        help="How to use a posed skeleton wired to input 1: constrain the whole body, "
-             "or only selected end-effectors (hands/feet).",
-    ))
-    pose_ee = {"disablewhen": '{ pose_type != "End-Effector" }'}
-    ptg.append(hou.ToggleParmTemplate("ee_left_hand", "Left Hand", default_value=False, tags=pose_ee))
-    ptg.append(hou.ToggleParmTemplate("ee_right_hand", "Right Hand", default_value=True, tags=pose_ee))
-    ptg.append(hou.ToggleParmTemplate("ee_left_foot", "Left Foot", default_value=False, tags=pose_ee))
-    ptg.append(hou.ToggleParmTemplate("ee_right_foot", "Right Foot", default_value=False, tags=pose_ee))
-    ptg.append(hou.StringParmTemplate(
-        "pose_keyframes", "Pose Keyframes", 1,
-        default_value=("",),
-        help="Frame numbers to sample the input-1 skeleton at, e.g. `0 45 89`. Empty = no "
-             "pose constraint.",
-    ))
-    ptg.append(hou.ButtonParmTemplate(
+    con.addParmTemplate(js)
+    pose = hou.FolderParmTemplate("grp_pose", "Pose Keyframes (input 1)", folder_type=hou.folderType.Collapsible,
+                                  tags={"group_default": "1"})
+    pose.addParmTemplate(hou.ButtonParmTemplate(
         "make_pose_rig", "Create Pose Rig",
         script_callback=_MAKE_RIG_CB,
         script_callback_language=hou.scriptLanguage.Python,
         help="Drop an independent A-pose rig (+ Rig Pose) into the network and wire it to "
              "input 1. Pose / keyframe it to author full-body / end-effector constraints.",
     ))
-    ptg.append(hou.ButtonParmTemplate(
-        "generate", "Generate",
-        script_callback=generate_cb,
-        script_callback_language=hou.scriptLanguage.Python,
-        join_with_next=True,
-    ))
-    ptg.append(hou.ButtonParmTemplate(
-        "cancel", "Cancel",
-        script_callback=_CANCEL_CB,
-        script_callback_language=hou.scriptLanguage.Python,
-    ))
-    ptg.append(hou.StringParmTemplate(
-        "status", "Status", 1,
+    pose.addParmTemplate(hou.StringParmTemplate(
+        "pose_keyframes", "Pose Keyframes", 1,
         default_value=("",),
-        help="Current job status. Updated automatically by Generate.",
+        help="Frame numbers to sample the input-1 skeleton at, e.g. `0 45 89`. Empty = no "
+             "pose constraint.",
     ))
-    ptg.append(hou.StringParmTemplate(
-        "job_id", "Job ID", 1,
-        default_value=("",),
-        is_hidden=True,
+    pose.addParmTemplate(hou.MenuParmTemplate(
+        "pose_type", "Pose Constraint",
+        ("Full-Body", "End-Effector"),
+        default_value=0,
+        disable_when='{ pose_keyframes == "" }',
+        help="How to use the posed skeleton on input 1: constrain the whole body, "
+             "or only the selected hands/feet.",
     ))
-    ptg.append(hou.IntParmTemplate(
-        "frame_ref", "Frame", 1,
-        default_expression=("$F",),
+    pose_ee = '{ pose_type != "End-Effector" } { pose_keyframes == "" }'
+    pose.addParmTemplate(hou.ToggleParmTemplate("ee_left_hand", "Left Hand", default_value=False,
+                                                disable_when=pose_ee, join_with_next=True))
+    pose.addParmTemplate(hou.ToggleParmTemplate("ee_right_hand", "Right Hand", default_value=True,
+                                                disable_when=pose_ee))
+    pose.addParmTemplate(hou.ToggleParmTemplate("ee_left_foot", "Left Foot", default_value=False,
+                                                disable_when=pose_ee, join_with_next=True))
+    pose.addParmTemplate(hou.ToggleParmTemplate("ee_right_foot", "Right Foot", default_value=False,
+                                                disable_when=pose_ee))
+    con.addParmTemplate(pose)
+    ptg.append(con)
+
+    # Tab: Output — timing and the clip file.
+    out = hou.FolderParmTemplate("fld_output", "Output", folder_type=hou.folderType.Tabs)
+    out.addParmTemplate(hou.IntParmTemplate(
+        "start_frame", "Start Frame", 1,
+        default_expression=("$FSTART",),
         default_expression_language=(hou.scriptLanguage.Hscript,),
-        is_hidden=True,
+        min=-1000, max=1000, min_is_strict=False, max_is_strict=False,
+        help="Scene frame on which the clip begins. The first sample holds before it, "
+             "the last sample holds after the clip ends.",
     ))
-    ptg.append(hou.SeparatorParmTemplate("sep_npz"))
-    ptg.append(hou.StringParmTemplate(
+    out.addParmTemplate(hou.StringParmTemplate(
         "npz_path", "NPZ Path", 1,
         default_value=(_NPZ_DEFAULT or "",),
         string_type=hou.stringParmType.FileReference,
         file_type=hou.fileType.Any,
         tags={"filechooser_pattern": "*.npz"},
+        help="The clip the node reads. Set by Generate, or point it at any compatible Kimodo "
+             "NPZ by hand (no server needed).",
+    ))
+    adv = hou.FolderParmTemplate("grp_advanced", "Advanced", folder_type=hou.folderType.Collapsible,
+                                 tags={"group_default": "0"})
+    adv.addParmTemplate(hou.ToggleParmTemplate(
+        "retime", "Retime to Scene FPS",
+        default_value=True,
+        help="Map clip samples onto scene frames so the clip keeps its real duration at any "
+             "$FPS (nearest sample, no blending). Off = one clip sample per scene frame, so a "
+             "30 fps clip plays slow at 24 fps.",
+    ))
+    adv.addParmTemplate(hou.IntParmTemplate(
+        "source_fps", "Clip FPS", 1,
+        default_value=(_KIMODO_FPS,), min=1, max=120,
+        help="Frame rate Kimodo generated the clip at: 30 for the SOMA models. This is a "
+             "property of the model, not of your scene; do not set it to $FPS or Retime "
+             "becomes a no-op.",
+    ))
+    out.addParmTemplate(adv)
+    ptg.append(out)
+
+    # Tab: Server — set once.
+    srv = hou.FolderParmTemplate("fld_server", "Server", folder_type=hou.folderType.Tabs)
+    srv.addParmTemplate(hou.StringParmTemplate(
+        "server_url", "API Server URL", 1,
+        default_value=("http://localhost:8001",),
+        join_with_next=True,
+        help="URL of the running kimodo_server. Point at the GPU host if it runs elsewhere.",
+    ))
+    srv.addParmTemplate(hou.ButtonParmTemplate(
+        "test_connection", "Test Connection",
+        script_callback=_TEST_CB,
+        script_callback_language=hou.scriptLanguage.Python,
+        help="Ping the server's /health endpoint and report in Status.",
+    ))
+    srv.addParmTemplate(hou.StringParmTemplate(
+        "download_dir", "Download Dir", 1,
+        default_value=("$HIP/kimodo_cache",),
+        string_type=hou.stringParmType.FileReference,
+        file_type=hou.fileType.Directory,
+        help="Local folder where generated NPZ files are downloaded from the server.",
+    ))
+    ptg.append(srv)
+
+    # Hidden plumbing.
+    ptg.append(hou.StringParmTemplate("job_id", "Job ID", 1, default_value=("",), is_hidden=True))
+    ptg.append(hou.IntParmTemplate(
+        "frame_ref", "Frame", 1,
+        default_expression=("$F",),
+        default_expression_language=(hou.scriptLanguage.Hscript,),
+        is_hidden=True,
     ))
 
     hda_def.setParmTemplateGroup(ptg)
@@ -632,8 +780,6 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
 
     # Output connector labels live in the DialogScript as `outputlabel N "..."`
     # lines (right after the inputlabel block); inject them and re-save.
-    labels = (["Animated Pose", "Capture Pose", "Rest Geometry", "T-Pose"]
-              if skin_sections else ["Animated Pose", "T-Pose"])
     ds = hda_def.sections()["DialogScript"].contents().splitlines(keepends=True)
     # name the (optional) input connectors
     _inlabels = {"1": "Root Path / Waypoints (opt)", "2": "Pose Keyframes / skeleton (opt)"}

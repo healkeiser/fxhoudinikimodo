@@ -36,7 +36,7 @@ stat
 {
   create -1
   modify -1
-  author chordee@LAPTOP-ULJICLO8
+  author valen@vision
   access 0777
 }
 color UT_Color RGB 0.8 0.8 0.8 
@@ -64,19 +64,19 @@ Content-Type: text/plain
 1 13.696400000000001 1.1294999999999999 2 0 __NO_OWNER_NETWORK_BOX__ "FROMOUTPUT"
 
 --HOUDINIMIMEBOUNDARY0xD3ADD339-0x00000F49-0x56B122C9-0x00000001HOUDINIMIMEBOUNDARY
-Content-Disposition: attachment; filename="hdaroot/gen_sop.init"
+Content-Disposition: attachment; filename="hdaroot/animated_sop.init"
 Content-Type: text/plain
 
 type = python
 matchesdef = 1
 
 --HOUDINIMIMEBOUNDARY0xD3ADD339-0x00000F49-0x56B122C9-0x00000001HOUDINIMIMEBOUNDARY
-Content-Disposition: attachment; filename="hdaroot/gen_sop.def"
+Content-Disposition: attachment; filename="hdaroot/animated_sop.def"
 Content-Type: text/plain
 
 sopflags sopflags = 
 comment ""
-position 0 1.1295
+position 6.4952 1.1295
 connectornextid 1
 flags =  lock off model off template off footprint off xray off bypass off display off render off highlight off unload off savedata off compress on colordefault on exposed on
 outputsNamed3
@@ -93,7 +93,7 @@ stat
 {
   create -1
   modify -1
-  author chordee@LAPTOP-ULJICLO8
+  author valen@vision
   access 0777
 }
 color UT_Color RGB 0.8 0.8 0.8 
@@ -102,7 +102,7 @@ exprlanguage hscript
 end
 
 --HOUDINIMIMEBOUNDARY0xD3ADD339-0x00000F49-0x56B122C9-0x00000001HOUDINIMIMEBOUNDARY
-Content-Disposition: attachment; filename="hdaroot/gen_sop.parm"
+Content-Disposition: attachment; filename="hdaroot/animated_sop.parm"
 Content-Type: text/plain
 
 {
@@ -139,8 +139,15 @@ def _cook():
     global_rots = data[\"global_rot_mats\"] # (T, 77, 3, 3) world rotations
     T           = posed.shape[0]
 
-    frame = hda_node.parm(\"frame_ref\").eval() - 1
-    frame = max(0, min(frame, T - 1))
+    # Which clip sample to show. The clip starts on Start Frame; with Retime on, scene
+    # frames are mapped onto clip samples (Source FPS / scene FPS) so a 3 s clip lasts
+    # 3 s at any $FPS. Before the start the first sample holds, after the end the last.
+    # ponytail: nearest sample, no blending; kinefx::motionclip + Motion Clip Retime
+    # downstream if sub-frame interpolation is ever needed.
+    f = hda_node.parm(\"frame_ref\").eval() - hda_node.parm(\"start_frame\").eval()
+    if hda_node.parm(\"retime\").eval():
+        f = f * hda_node.parm(\"source_fps\").eval() / hou.fps()
+    frame = max(0, min(int(round(f)), T - 1))
 
     pos  = posed[frame]
     grot = global_rots[frame]
@@ -162,8 +169,8 @@ def _cook():
 
     # Kimodo global_rot_mats are column-vector and world-axis-aligned at rest;
     # the T-pose offsets re-align each joint frame to its bone, so right-multiplying
-    # gives a bone-aligned world orientation matching output1. Houdini KineFX is
-    # row-vector / row-major, so we transpose; translation goes in the last row.
+    # gives a bone-aligned world orientation matching the T-Pose output. Houdini KineFX
+    # is row-vector / row-major, so we transpose; translation goes in the last row.
     tp = np.asarray(TPOSE_ROTS, dtype=float).reshape(-1, 3, 3)
     world_rot = [grot[i] @ tp[i] for i in range(len(SOMA77_JOINTS))]
     world_m = []
@@ -210,7 +217,7 @@ maintainstate	[ 0	locks=0 ]	(	"off"	)
 }
 
 --HOUDINIMIMEBOUNDARY0xD3ADD339-0x00000F49-0x56B122C9-0x00000001HOUDINIMIMEBOUNDARY
-Content-Disposition: attachment; filename="hdaroot/gen_sop.userdata"
+Content-Disposition: attachment; filename="hdaroot/animated_sop.userdata"
 Content-Type: text/plain
 
 {
@@ -221,14 +228,14 @@ Content-Type: text/plain
 }
 
 --HOUDINIMIMEBOUNDARY0xD3ADD339-0x00000F49-0x56B122C9-0x00000001HOUDINIMIMEBOUNDARY
-Content-Disposition: attachment; filename="hdaroot/rest_sop.init"
+Content-Disposition: attachment; filename="hdaroot/tpose_sop.init"
 Content-Type: text/plain
 
 type = python
 matchesdef = 1
 
 --HOUDINIMIMEBOUNDARY0xD3ADD339-0x00000F49-0x56B122C9-0x00000001HOUDINIMIMEBOUNDARY
-Content-Disposition: attachment; filename="hdaroot/rest_sop.def"
+Content-Disposition: attachment; filename="hdaroot/tpose_sop.def"
 Content-Type: text/plain
 
 sopflags sopflags = 
@@ -250,7 +257,7 @@ stat
 {
   create -1
   modify -1
-  author chordee@LAPTOP-ULJICLO8
+  author valen@vision
   access 0777
 }
 color UT_Color RGB 0.8 0.8 0.8 
@@ -259,7 +266,7 @@ exprlanguage hscript
 end
 
 --HOUDINIMIMEBOUNDARY0xD3ADD339-0x00000F49-0x56B122C9-0x00000001HOUDINIMIMEBOUNDARY
-Content-Disposition: attachment; filename="hdaroot/rest_sop.parm"
+Content-Disposition: attachment; filename="hdaroot/tpose_sop.parm"
 Content-Type: text/plain
 
 {
@@ -295,141 +302,7 @@ maintainstate	[ 0	locks=0 ]	(	"off"	)
 }
 
 --HOUDINIMIMEBOUNDARY0xD3ADD339-0x00000F49-0x56B122C9-0x00000001HOUDINIMIMEBOUNDARY
-Content-Disposition: attachment; filename="hdaroot/rest_sop.userdata"
-Content-Type: text/plain
-
-{
-	"___Version___":{
-		"type":"string",
-		"value":"___EXTERNAL___"
-	}
-}
-
---HOUDINIMIMEBOUNDARY0xD3ADD339-0x00000F49-0x56B122C9-0x00000001HOUDINIMIMEBOUNDARY
-Content-Disposition: attachment; filename="hdaroot/output0.init"
-Content-Type: text/plain
-
-type = output
-matchesdef = 1
-
---HOUDINIMIMEBOUNDARY0xD3ADD339-0x00000F49-0x56B122C9-0x00000001HOUDINIMIMEBOUNDARY
-Content-Disposition: attachment; filename="hdaroot/output0.def"
-Content-Type: text/plain
-
-sopflags sopflags = 
-comment ""
-position 0 5.55112e-17
-connectornextid 1
-flags =  lock off model off template off footprint off xray off bypass off display on render on highlight off unload off savedata off compress on colordefault on exposed on
-outputsNamed3
-{
-}
-inputsNamed3
-{
-0 	gen_sop 0 1 "input1"
-}
-inputs
-{
-0 	gen_sop 0 1
-}
-stat
-{
-  create -1
-  modify -1
-  author chordee@LAPTOP-ULJICLO8
-  access 0777
-}
-color UT_Color RGB 0.8 0.8 0.8 
-delscript ""
-exprlanguage hscript
-end
-
---HOUDINIMIMEBOUNDARY0xD3ADD339-0x00000F49-0x56B122C9-0x00000001HOUDINIMIMEBOUNDARY
-Content-Disposition: attachment; filename="hdaroot/output0.parm"
-Content-Type: text/plain
-
-{
-version 0.8
-outputidx	[ 0	locks=0 ]	(	0	)
-}
-
---HOUDINIMIMEBOUNDARY0xD3ADD339-0x00000F49-0x56B122C9-0x00000001HOUDINIMIMEBOUNDARY
-Content-Disposition: attachment; filename="hdaroot/output0.userdata"
-Content-Type: text/plain
-
-{
-	"___Version___":{
-		"type":"string",
-		"value":"___EXTERNAL___"
-	}
-}
-
---HOUDINIMIMEBOUNDARY0xD3ADD339-0x00000F49-0x56B122C9-0x00000001HOUDINIMIMEBOUNDARY
-Content-Disposition: attachment; filename="hdaroot/apose_sop.init"
-Content-Type: text/plain
-
-type = python
-matchesdef = 1
-
---HOUDINIMIMEBOUNDARY0xD3ADD339-0x00000F49-0x56B122C9-0x00000001HOUDINIMIMEBOUNDARY
-Content-Disposition: attachment; filename="hdaroot/apose_sop.def"
-Content-Type: text/plain
-
-sopflags sopflags = 
-comment ""
-position 3.2476 1.1295
-connectornextid 1
-flags =  lock off model off template off footprint off xray off bypass off display off render off highlight off unload off savedata off compress on colordefault on exposed on
-outputsNamed3
-{
-0 "output1"
-}
-inputsNamed3
-{
-}
-inputs
-{
-}
-stat
-{
-  create -1
-  modify -1
-  author chordee@LAPTOP-ULJICLO8
-  access 0777
-}
-color UT_Color RGB 0.8 0.8 0.8 
-delscript ""
-exprlanguage hscript
-end
-
---HOUDINIMIMEBOUNDARY0xD3ADD339-0x00000F49-0x56B122C9-0x00000001HOUDINIMIMEBOUNDARY
-Content-Disposition: attachment; filename="hdaroot/apose_sop.parm"
-Content-Type: text/plain
-
-{
-version 0.8
-python	[ 0	locks=0 ]	(	"import os, base64, tempfile, hou
-node = hou.pwd()
-name = \"apose.bgeo.sc\"
-raw = node.parent().type().definition().sections()[name].contents()
-data = base64.b64decode(raw)
-fd, path = tempfile.mkstemp(prefix=\"kimodo_\", suffix=\"_\" + name)
-os.close(fd)
-try:
-    with open(path, \"wb\") as fh:
-        fh.write(data)
-    node.geometry().loadFromFile(path)
-finally:
-    try:
-        os.remove(path)
-    except OSError:
-        pass
-"	)
-maintainstate	[ 0	locks=0 ]	(	"off"	)
-}
-
---HOUDINIMIMEBOUNDARY0xD3ADD339-0x00000F49-0x56B122C9-0x00000001HOUDINIMIMEBOUNDARY
-Content-Disposition: attachment; filename="hdaroot/apose_sop.userdata"
+Content-Disposition: attachment; filename="hdaroot/tpose_sop.userdata"
 Content-Type: text/plain
 
 {
@@ -452,7 +325,7 @@ Content-Type: text/plain
 
 sopflags sopflags = 
 comment ""
-position 6.4952 1.1295
+position 0 1.1295
 connectornextid 1
 flags =  lock off model off template off footprint off xray off bypass off display off render off highlight off unload off savedata off compress on colordefault on exposed on
 outputsNamed3
@@ -469,7 +342,7 @@ stat
 {
   create -1
   modify -1
-  author chordee@LAPTOP-ULJICLO8
+  author valen@vision
   access 0777
 }
 color UT_Color RGB 0.8 0.8 0.8 
@@ -515,6 +388,140 @@ Content-Type: text/plain
 }
 
 --HOUDINIMIMEBOUNDARY0xD3ADD339-0x00000F49-0x56B122C9-0x00000001HOUDINIMIMEBOUNDARY
+Content-Disposition: attachment; filename="hdaroot/apose_sop.init"
+Content-Type: text/plain
+
+type = python
+matchesdef = 1
+
+--HOUDINIMIMEBOUNDARY0xD3ADD339-0x00000F49-0x56B122C9-0x00000001HOUDINIMIMEBOUNDARY
+Content-Disposition: attachment; filename="hdaroot/apose_sop.def"
+Content-Type: text/plain
+
+sopflags sopflags = 
+comment ""
+position 3.2476 1.1295
+connectornextid 1
+flags =  lock off model off template off footprint off xray off bypass off display off render off highlight off unload off savedata off compress on colordefault on exposed on
+outputsNamed3
+{
+0 "output1"
+}
+inputsNamed3
+{
+}
+inputs
+{
+}
+stat
+{
+  create -1
+  modify -1
+  author valen@vision
+  access 0777
+}
+color UT_Color RGB 0.8 0.8 0.8 
+delscript ""
+exprlanguage hscript
+end
+
+--HOUDINIMIMEBOUNDARY0xD3ADD339-0x00000F49-0x56B122C9-0x00000001HOUDINIMIMEBOUNDARY
+Content-Disposition: attachment; filename="hdaroot/apose_sop.parm"
+Content-Type: text/plain
+
+{
+version 0.8
+python	[ 0	locks=0 ]	(	"import os, base64, tempfile, hou
+node = hou.pwd()
+name = \"apose.bgeo.sc\"
+raw = node.parent().type().definition().sections()[name].contents()
+data = base64.b64decode(raw)
+fd, path = tempfile.mkstemp(prefix=\"kimodo_\", suffix=\"_\" + name)
+os.close(fd)
+try:
+    with open(path, \"wb\") as fh:
+        fh.write(data)
+    node.geometry().loadFromFile(path)
+finally:
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+"	)
+maintainstate	[ 0	locks=0 ]	(	"off"	)
+}
+
+--HOUDINIMIMEBOUNDARY0xD3ADD339-0x00000F49-0x56B122C9-0x00000001HOUDINIMIMEBOUNDARY
+Content-Disposition: attachment; filename="hdaroot/apose_sop.userdata"
+Content-Type: text/plain
+
+{
+	"___Version___":{
+		"type":"string",
+		"value":"___EXTERNAL___"
+	}
+}
+
+--HOUDINIMIMEBOUNDARY0xD3ADD339-0x00000F49-0x56B122C9-0x00000001HOUDINIMIMEBOUNDARY
+Content-Disposition: attachment; filename="hdaroot/output0.init"
+Content-Type: text/plain
+
+type = output
+matchesdef = 1
+
+--HOUDINIMIMEBOUNDARY0xD3ADD339-0x00000F49-0x56B122C9-0x00000001HOUDINIMIMEBOUNDARY
+Content-Disposition: attachment; filename="hdaroot/output0.def"
+Content-Type: text/plain
+
+sopflags sopflags = 
+comment ""
+position 0 5.55112e-17
+connectornextid 1
+flags =  lock off model off template off footprint off xray off bypass off display on render on highlight off unload off savedata off compress on colordefault on exposed on
+outputsNamed3
+{
+}
+inputsNamed3
+{
+0 	skin_sop 0 1 "input1"
+}
+inputs
+{
+0 	skin_sop 0 1
+}
+stat
+{
+  create -1
+  modify -1
+  author valen@vision
+  access 0777
+}
+color UT_Color RGB 0.8 0.8 0.8 
+delscript ""
+exprlanguage hscript
+end
+
+--HOUDINIMIMEBOUNDARY0xD3ADD339-0x00000F49-0x56B122C9-0x00000001HOUDINIMIMEBOUNDARY
+Content-Disposition: attachment; filename="hdaroot/output0.parm"
+Content-Type: text/plain
+
+{
+version 0.8
+outputidx	[ 0	locks=0 ]	(	0	)
+}
+
+--HOUDINIMIMEBOUNDARY0xD3ADD339-0x00000F49-0x56B122C9-0x00000001HOUDINIMIMEBOUNDARY
+Content-Disposition: attachment; filename="hdaroot/output0.userdata"
+Content-Type: text/plain
+
+{
+	"___Version___":{
+		"type":"string",
+		"value":"___EXTERNAL___"
+	}
+}
+
+--HOUDINIMIMEBOUNDARY0xD3ADD339-0x00000F49-0x56B122C9-0x00000001HOUDINIMIMEBOUNDARY
 Content-Disposition: attachment; filename="hdaroot/output1.init"
 Content-Type: text/plain
 
@@ -545,7 +552,7 @@ stat
 {
   create -1
   modify -1
-  author chordee@LAPTOP-ULJICLO8
+  author valen@vision
   access 0777
 }
 color UT_Color RGB 0.8 0.8 0.8 
@@ -594,17 +601,17 @@ outputsNamed3
 }
 inputsNamed3
 {
-0 	skin_sop 0 1 "input1"
+0 	animated_sop 0 1 "input1"
 }
 inputs
 {
-0 	skin_sop 0 1
+0 	animated_sop 0 1
 }
 stat
 {
   create -1
   modify -1
-  author chordee@LAPTOP-ULJICLO8
+  author valen@vision
   access 0777
 }
 color UT_Color RGB 0.8 0.8 0.8 
@@ -653,17 +660,17 @@ outputsNamed3
 }
 inputsNamed3
 {
-0 	rest_sop 0 1 "input1"
+0 	tpose_sop 0 1 "input1"
 }
 inputs
 {
-0 	rest_sop 0 1
+0 	tpose_sop 0 1
 }
 stat
 {
   create -1
   modify -1
-  author chordee@LAPTOP-ULJICLO8
+  author valen@vision
   access 0777
 }
 color UT_Color RGB 0.8 0.8 0.8 
@@ -696,11 +703,11 @@ Content-Disposition: attachment; filename="hdaroot.order"
 Content-Type: text/plain
 
 8
-gen_sop
-rest_sop
-output0
-apose_sop
+animated_sop
+tpose_sop
 skin_sop
+apose_sop
+output0
 output1
 output2
 output3

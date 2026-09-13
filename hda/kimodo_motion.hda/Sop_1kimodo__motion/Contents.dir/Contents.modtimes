@@ -1,11 +1,11 @@
 {
-	"hdaroot/gen_sop.def":1787108713,
-	"hdaroot/apose_sop.def":1787108705,
-	"hdaroot/output3.def":1787108714,
-	"hdaroot/output0.def":1787108718,
-	"hdaroot/rest_sop.def":1787108705,
-	"hdaroot/output1.def":1787108714,
-	"hdaroot.def":1787108711,
-	"hdaroot/skin_sop.def":1787108705,
-	"hdaroot/output2.def":1787108714
+	"hdaroot/apose_sop.def":1789331399,
+	"hdaroot/output3.def":1789331408,
+	"hdaroot/output0.def":1789331412,
+	"hdaroot/animated_sop.def":1789331407,
+	"hdaroot/tpose_sop.def":1789331399,
+	"hdaroot/output1.def":1789331408,
+	"hdaroot.def":1789331405,
+	"hdaroot/skin_sop.def":1789331399,
+	"hdaroot/output2.def":1789331408
 }

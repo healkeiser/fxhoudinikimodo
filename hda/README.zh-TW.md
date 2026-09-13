@@ -196,9 +196,9 @@ hython scripts/_add_help.py
 
 ```bash
 # Windows
-copy kimodo-houdini-bridge.json %HOUDINI_USER_PREF_DIR%\packages\
+copy fxhoudinikimodo.json %HOUDINI_USER_PREF_DIR%\packages\
 # Linux / macOS
-cp kimodo-houdini-bridge.json ~/houdiniXX.Y/packages/
+cp fxhoudinikimodo.json ~/houdiniXX.Y/packages/
 ```
 
 重啟 Houdini,即可在 Tab 選單的 **Kimodo** 分類下找到 `kimodo_motion` 節點。

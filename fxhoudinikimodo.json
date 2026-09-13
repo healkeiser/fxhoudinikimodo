@@ -1,0 +1,11 @@
+{
+    "env": [
+        {
+            "KIMODO_BRIDGE_ROOT": "/path/to/fxhoudinikimodo"
+        },
+        {
+            "HOUDINI_OTLSCAN_PATH": "$KIMODO_BRIDGE_ROOT/hda;&"
+        }
+    ],
+    "hpath": "$KIMODO_BRIDGE_ROOT/hda"
+}

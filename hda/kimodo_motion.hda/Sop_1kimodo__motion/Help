@@ -21,10 +21,12 @@ remote GPU box — set __API Server URL__ accordingly.
 # Start the Docker services (`docker compose -f docker-compose.bridge.yaml up text-encoder -d`, then `up api -d`).
 # Set __Prompt__ and __Duration__, then press __Generate__. Watch __Status__; the
   node cooks automatically when the NPZ has downloaded.
-# Set the Houdini frame range to match the clip and play back.
-# To get a deforming body: drop a __Labs/KineFX Joint Deform__ (`kinefx::jointdeform`)
-  and wire input 0 = __Rest Geometry__ (output 2), input 1 = __Capture Pose__
-  (output 1), input 2 = __Animated Pose__ (output 0).
+# The clip starts on __Start Frame__ and keeps its real duration at your scene FPS
+  (__Retime to Scene FPS__, on by default). __Clip__ shows its length.
+# To get a deforming body: drop a __KineFX Joint Deform__ (`kinefx::jointdeform`)
+  and wire the three outputs straight across: 0 -> 0 (__Rest Geometry__),
+  1 -> 1 (__Capture Pose__), 2 -> 2 (__Animated Pose__) — the same order as
+  Houdini's Test Geometry characters.
 
 == Parameters ==
 
@@ -94,7 +96,17 @@ Cancel:
 
 Status:
     Read-only. Shows the live job state: Queued, Running... (Ns), Downloading...,
-    Done (Ns), Failed, or Cancelled.
+    Done (Ns), Failed, or Cancelled. __Test Connection__ (Server tab) also reports here.
+
+Clip:
+    Read-only. Length of the last generated clip in samples and seconds.
+
+Start Frame / Retime to Scene FPS / Source FPS (Output tab):
+    The clip begins on __Start Frame__; the first sample holds before it and the
+    last after it. Kimodo generates at 30 fps (__Source FPS__). With __Retime__ on,
+    scene frames are mapped onto clip samples so a 3 s clip lasts 3 s whether the
+    scene runs at 24, 25 or 30 fps (nearest sample, no blending). Off = one clip
+    sample per scene frame, i.e. the clip plays slower at 24 fps.
 
 NPZ Path:
     The `.npz` the node reads to build the skeleton (a file field, *.npz). Set by
@@ -106,7 +118,15 @@ NPZ Path:
 Four outputs, all in the same world space. World rotations use Houdini's
 row-vector convention (transposed from Kimodo's matrices).
 
-:output 0 — Animated Pose:
+:output 0 — Rest Geometry:
+    The SOMA77 body mesh in its bind pose, with a KineFX `boneCapture` attribute
+    (weights + bind from Kimodo's skinning). Drive it with `kinefx::jointdeform`.
+
+:output 1 — Capture Pose:
+    The A-pose rest skeleton the mesh is bound to (feet on floor). `name` +
+    `transform`. Use as the rest skeleton for the deformer.
+
+:output 2 — Animated Pose:
     Per-frame animated skeleton. Carries `name`, `path`, `parent_id`, `transform`
     (float[9] world rotation) and `localtransform` (float[16] local 4x4).
 
@@ -117,19 +137,12 @@ row-vector convention (transposed from Kimodo's matrices).
     value, so treat them as redundant; in a 4-channel NPZ they are not covered
     at all and stay 0. NPZs without the labels get no `contact` attribute.
 
-:output 1 — Capture Pose:
-    The A-pose rest skeleton the mesh is bound to (feet on floor). `name` +
-    `transform`. Use as the rest skeleton for the deformer.
-
-:output 2 — Rest Geometry:
-    The SOMA77 body mesh in its bind pose, with a KineFX `boneCapture` attribute
-    (weights + bind from Kimodo's skinning). Drive it with `kinefx::jointdeform`.
-
 :output 3 — T-Pose:
-    A T-pose skeleton (`name` + `transform`) for reference / retargeting.
+    A T-pose skeleton (`name` + `transform`) for reference / retargeting. Feed it
+    to a Rig Stash Pose (input 1, match by name) to give Biped Setup a real rest pose.
 
-Deform graph: `kinefx::jointdeform` with input 0 = output 2, input 1 = output 1,
-input 2 = output 0 — the body follows the animation and returns to bind at rest.
+Deform graph: `kinefx::jointdeform` with outputs 0, 1, 2 wired to inputs 0, 1, 2 —
+the body follows the animation and returns to bind at rest.
 
 == SOMA77 Skeleton Hierarchy ==
 

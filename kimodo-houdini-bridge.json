@@ -1,8 +1,0 @@
-{
-    "env": [
-        {
-            "KIMODO_BRIDGE_ROOT": "/path/to/kimodo-houdini-bridge"
-        }
-    ],
-    "hpath": "$KIMODO_BRIDGE_ROOT/hda"
-}

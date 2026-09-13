@@ -121,10 +121,11 @@ Drop a **`kimodo_motion`** node in a SOP network:
 1. Set **API Server URL** to `http://localhost:8001` (or the GPU host).
 2. Set **Prompt** and **Duration**, then press **Generate**. The NPZ downloads to
    **Download Dir** (`$HIP/kimodo_cache`) and the node cooks.
-3. The node has four outputs — **Animated Pose**, **Capture Pose**, **Rest Geometry**
-   (skinned body mesh) and **T-Pose**.
-4. To deform the body, add a **`kinefx::jointdeform`** and wire input 0 = Rest Geometry,
-   input 1 = Capture Pose, input 2 = Animated Pose.
+3. The node has four outputs in SideFX character order — **Rest Geometry** (skinned body
+   mesh), **Capture Pose**, **Animated Pose** and **T-Pose**. The clip starts on **Start
+   Frame** and is retimed to your scene FPS by default (Output tab).
+4. To deform the body, add a **`kinefx::jointdeform`** and wire outputs 0, 1, 2 straight
+   into inputs 0, 1, 2.
 
 > **Constraints (optional):** to steer the motion toward spatial targets, supply
 > [Kimodo constraints](https://research.nvidia.com/labs/sil/projects/kimodo/docs/key_concepts/constraints.html)

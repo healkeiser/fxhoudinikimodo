@@ -1,7 +1,7 @@
 Operator:     kimodo_motion
 Label:        Kimodo Motion Generator
 Path:         oplib:/Sop/kimodo_motion?Sop/kimodo_motion
-Icon:         SOP_subnet
+Icon:         opdef:/Sop/kimodo_motion?IconSVG
 Table:        Sop
 License:      
 Extra:        visibleoutputs=4 
@@ -11,5 +11,5 @@ Outputs:      4
 Subnet:       true
 Python:       false
 Empty:        false
-Modified:     Wed Aug 19 11:33:06 2026
+Modified:     Sun Sep 13 22:30:01 2026
 
