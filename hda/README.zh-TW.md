@@ -1,5 +1,7 @@
 # HDA 函式庫（繁體中文說明）
 
+> **Note (English):** this translation describes the upstream v1.0 interface of chordee/kimodo-houdini-bridge. The fxhoudinikimodo changes (output order, tabs, frame-based duration, retiming, Windows notes) are documented in the English files only.
+
 [English](README.md)
 
 本目錄收錄 Kimodo-Houdini 橋接專案的 Houdini Digital Asset，以**解包（unpacked）格式**

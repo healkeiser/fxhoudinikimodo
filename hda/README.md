@@ -49,29 +49,48 @@ normal use:
 
 ### Parameters
 
+Grouped by tab. **Status** is also the node's descriptive parm, so it shows under the node
+in the network editor.
+
+**Generate**
+
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| API Server URL | `http://localhost:8001` | URL of the running `kimodo_server`. Point at the GPU host if the server runs elsewhere. |
-| Download Dir | `$HIP/kimodo_cache` | Local folder where finished NPZ files are downloaded from the server over HTTP. |
-| Prompt | `a person walks forward` | Natural language description of the motion. Be specific about body part, direction, speed and style. |
-| Duration (frames) | `3*$FPS` | Length of the clip in scene frames at the current FPS; converted to seconds for Kimodo (which samples at 30 fps). With Retime on you get back exactly this many frames. |
-| Clip | _(read-only)_ | Length of the last generated clip in samples and seconds. |
-| Start Frame | `$FSTART` | Scene frame the clip begins on (Output tab). First sample holds before it, last sample after it. |
-| Retime to Scene FPS (Advanced) | `on` | Map the 30 fps clip onto scene frames so it keeps its real duration at 24/25/30 fps (nearest sample). Off = one sample per frame. |
-| Clip FPS (Advanced) | `30` | Frame rate Kimodo generated the clip at, a property of the model, not the scene. Leave at 30 for SOMA; setting it to $FPS disables retiming. |
-| Test Connection | — | Pings `<API Server URL>/health` and reports in Status (Server tab). |
-| Model | `Kimodo-SOMA-RP-v1.1` | Kimodo model variant. `RP` conditions on a rest pose; `SEED` uses a fixed seed for reproducibility. |
-| Force Regenerate | `off` | Bypass the server cache and re-run inference even if a matching clip exists. |
-| Constraints File | _(empty)_ | Optional [Kimodo constraints](https://research.nvidia.com/labs/sil/projects/kimodo/docs/key_concepts/constraints.html) JSON file (`*.json`). See [Constraints](#constraints-optional). |
-| Constraints JSON | _(empty)_ | Optional inline constraints JSON; takes precedence over Constraints File. |
-| Pose Constraint | `Full-Body` | How to use a posed skeleton on input 1: `Full-Body` (whole skeleton) or `End-Effector`. See [Pose constraints](#pose-constraints-input-1). |
-| Left/Right Hand/Foot | Right Hand | For `End-Effector`: which joints to pin (the rest of the body stays free). |
-| **Create Pose Rig** | — | Drops an independent A-pose rig (+ Rig Pose) into the network and wires it to input 1, ready to pose. |
+| Prompt | `a person walks forward` | Multi-line. What the character does, in English; be specific about body part, direction, speed and style. |
+| Duration (frames) | `3*$FPS` | Clip length in scene frames at the current FPS; converted to seconds for Kimodo (30 fps). With Retime on you get back exactly this many frames. |
+| Model | `Kimodo-SOMA-RP-v1.1` | Kimodo checkpoint. `RP` conditions on a rest pose; `SEED` uses a fixed seed for reproducibility. |
+| **Generate** / **Cancel** | — | Submit the prompt and return at once; a background thread polls, downloads the NPZ and recooks the node. Cancel stops a queued job or discards the result. |
+| Force Regenerate | `off` | Bypass the server cache (keyed on prompt + duration + model + constraints). |
+| Status | _(read-only)_ | `Queued`, `Running... (Ns)`, `Downloading...`, `Done (Ns)`, `Done (cached)`, `Failed`, `Cancelled`, or the Test Connection result. |
+| Clip | _(read-only)_ | Length of the last clip in seconds, scene frames and Kimodo samples. |
+
+**Constraints** (two collapsible groups; see [Constraints](#constraints-optional))
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| Constraints File | _(empty)_ | Kimodo constraints JSON file (`*.json`). |
+| Constraints JSON | _(empty)_ | Inline constraints JSON; takes precedence over the file. |
+| **Create Pose Rig** | — | Drops an independent A-pose rig (+ Rig Pose) into the network and wires it to input 1. |
 | Pose Keyframes | _(empty)_ | Frames to sample input 1 at, e.g. `0 45 89`. Empty = no pose constraint. |
-| **Generate** | — | Submits the prompt to `<API Server URL>/generate` and returns immediately with a job ID. A background thread polls for progress, so Houdini stays responsive. When done, the NPZ is downloaded to **Download Dir**, **NPZ Path** is set, and the node recooks. |
-| **Cancel** | — | Cancels the job. A resident server can't interrupt an already-running generation — Cancel stops a queued job or discards the result. |
-| Status | _(read-only)_ | Live job state: `Queued`, `Running... (Ns)`, `Downloading...`, `Done (Ns)`, `Failed`, `Cancelled`. |
-| NPZ Path | _(empty)_ | The `.npz` the node reads to build the skeleton — a **file field** (browse, `*.npz`). Set by Generate; you can also point it at any compatible NPZ by hand (no Generate/server needed). Empty = empty geometry until set. |
+| Pose Constraint | `Full-Body` | `Full-Body` (whole skeleton) or `End-Effector` (selected hands/feet only). |
+| Left/Right Hand/Foot | Right Hand | For `End-Effector`: which joints to pin. |
+
+**Output**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| Start Frame | `$FSTART` | Scene frame the clip begins on. First sample holds before it, last sample after it. |
+| NPZ Path | _(empty)_ | The `.npz` the node reads. Set by Generate, or point it at any compatible SOMA77 NPZ by hand (no server needed). |
+| Retime to Scene FPS _(Advanced)_ | `on` | Map the 30 fps clip onto scene frames so it keeps its real duration at 24/25/30 fps (nearest sample). Off = one sample per frame. |
+| Clip FPS _(Advanced)_ | `30` | Rate Kimodo generated at; a property of the model, not the scene. Setting it to `$FPS` silently disables retiming. |
+
+**Server**
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| API Server URL | `http://localhost:8001` | URL of the running `kimodo_server`. Point at the GPU host if it runs elsewhere. |
+| **Test Connection** | — | Pings `/health` and reports in Status. |
+| Download Dir | `$HIP/kimodo_cache` | Local folder where finished NPZ files are downloaded. |
 
 #### What is an NPZ file?
 
@@ -194,7 +213,7 @@ MOCK_MODE=0 docker compose -f docker-compose.bridge.yaml up api -d
 ```
 
 The model is preloaded from the local HuggingFace cache (offline), so the weights must
-be cached first (`huggingface-cli download nvidia/Kimodo-SOMA-RP-v1.1`). It then stays
+be cached first (`hf download nvidia/Kimodo-SOMA-RP-v1.1`). It then stays
 resident in VRAM while the api container runs — stop it to free VRAM.
 
 ---

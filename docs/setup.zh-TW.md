@@ -1,5 +1,7 @@
 # 安裝指南
 
+> **Note (English):** this translation describes the upstream v1.0 interface of chordee/kimodo-houdini-bridge. The fxhoudinikimodo changes (output order, tabs, frame-based duration, retiming, Windows notes) are documented in the English files only.
+
 [English](setup.md)
 
 從 Docker 推論伺服器到 Houdini HDA 的完整流程。伺服器在啟動時預載 Kimodo 模型、
