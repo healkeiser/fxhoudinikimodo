@@ -1,4 +1,4 @@
-"""Add the help card to the kimodo_motion HDA and save it (unpacked) to hda/."""
+"""Add the help card to the vb::kimodo_motion HDA and save it (unpacked) to hda/."""
 import hou, os
 
 _HERE = os.path.dirname(__file__)
@@ -182,8 +182,9 @@ HELP_CARD = (
 
 
 def main():
-    src  = os.path.join(_HERE, "..", "kimodo_motion.hda")
-    dest = os.path.join(_HERE, "..", "hda", "kimodo_motion.hda")
+    lib  = "vb_kimodo_motion_1.1.hda"   # keep in sync with create_hda._LIBRARY
+    src  = os.path.join(_HERE, "..", lib)
+    dest = os.path.join(_HERE, "..", "hda", lib)
     hou.hda.installFile(src)
     defs = hou.hda.definitionsInFile(src)
     assert len(defs) == 1, "expected exactly one definition in %s, got %s" % (src, [d.nodeTypeName() for d in defs])

@@ -178,7 +178,7 @@ Read by `docker-compose.bridge.yaml`:
 <!-- DEVELOPMENT -->
 ## Development
 
-The HDA is generated, not hand-edited. `scripts/create_hda.py` is the single source of the node interface, cook scripts and callbacks; `hda/kimodo_motion.hda/` is the expanded, VCS-friendly result.
+The HDA is generated, not hand-edited. `scripts/create_hda.py` is the single source of the node interface, cook scripts and callbacks; `hda/vb_kimodo_motion_1.1.hda/` is the expanded, VCS-friendly result.
 
 ```shell
 # 1. embedded skin mesh + A-pose skeleton (needs the kimodo repo cloned alongside)

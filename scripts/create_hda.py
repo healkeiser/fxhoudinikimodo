@@ -1,10 +1,10 @@
 """
-Create kimodo_motion.hda via hython (no GUI needed).
+Create the vb::kimodo_motion HDA via hython (no GUI needed).
 
 Usage:
     hython scripts/create_hda.py [npz_default]
 
-Output: kimodo_motion.hda in the repo root.
+Output: vb_kimodo_motion_1.1.hda in the repo root (packed; _add_help.py expands it into hda/).
 """
 import os
 import re
@@ -13,7 +13,7 @@ import hou
 
 _HERE     = os.path.dirname(os.path.abspath(__file__))
 _REPO     = os.path.dirname(_HERE)
-_HDA_PATH = os.path.join(_REPO, "kimodo_motion.hda")
+# _HDA_PATH is defined below, after _LIBRARY.
 
 # Embedded geometry built by scripts/build_skin.py (run it first). When present,
 # the HDA gains the skin mesh (output 0) and the A-pose skeleton (output 1).
@@ -29,6 +29,9 @@ _ICON_SVG = os.path.join(_HERE, "kimodo_icon.svg")
 # Node type is <namespace>::kimodo_motion::<version>; bump _VERSION for breaking UI changes.
 _NAMESPACE = "vb"
 _VERSION   = "1.1"
+# Library file/dir name, derived from the type name the way Houdini does it.
+_LIBRARY   = "%s_kimodo_motion_%s.hda" % (_NAMESPACE, _VERSION)
+_HDA_PATH  = os.path.join(_REPO, _LIBRARY)
 
 
 def _skin_sections():

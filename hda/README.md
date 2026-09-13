@@ -5,7 +5,7 @@ stored in **unpacked (VCS-friendly) format** — a directory ending in `.hda/`.
 
 ---
 
-## kimodo_motion.hda
+## vb_kimodo_motion_1.1.hda
 
 **Type:** `Sop/vb::kimodo_motion::1.1` (namespace `vb`, versioned)  
 **Context:** SOP (geometry network)  
@@ -251,4 +251,4 @@ Restart Houdini — the `kimodo_motion` SOP appears in the Tab menu under **Kimo
 
 ### Option B — Manual install
 
-In Houdini: **Assets → Install Asset Library…** → select `hda/kimodo_motion.hda/`.
+In Houdini: **Assets → Install Asset Library…** → select `hda/vb_kimodo_motion_1.1.hda/`.
