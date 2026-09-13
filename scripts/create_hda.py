@@ -505,12 +505,13 @@ node.setUserData("nodeshape", "bulge")
 """
 
 _PROMPT_HELP = (
-    "What the character does, in plain English. Be specific about body part, "
-    "direction, speed and style. Examples:\n"
-    "  a person walks forward slowly\n"
-    "  someone jogs in a circle then stops\n"
-    "  a person waves with the right hand, then bows\n"
-    "  a tired person sits down on a chair"
+    "What the character does, in plain <b>English</b>. Be specific about body part, "
+    "direction, speed and style.<br><br>"
+    "<b>Examples</b><br>"
+    "<i>a person walks forward slowly</i><br>"
+    "<i>someone jogs in a circle then stops</i><br>"
+    "<i>a person waves with the right hand, then bows</i><br>"
+    "<i>a tired person sits down on a chair</i>"
 )
 
 
@@ -616,16 +617,17 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
         "duration_frames", "Duration (frames)", 1,
         default_value=(72,),
         min=12, max=720, min_is_strict=False, max_is_strict=False,
-        help="Length of the clip in scene frames at the current $FPS (72 = 3 s at 24 fps). "
-             "Converted to seconds for Kimodo, which generates at 30 fps; with Retime on you get "
-             "back exactly this many frames.",
+        help="Length of the clip in <b>scene frames</b> at the current <code>$FPS</code> "
+             "(<code>72</code> = 3 s at 24 fps).<br>Converted to seconds for Kimodo, which "
+             "generates at 30 fps; with <b>Retime to Scene FPS</b> on you get back exactly this "
+             "many frames.",
     ))
     gen.addParmTemplate(hou.MenuParmTemplate(
         "model", "Model",
         ("Kimodo-SOMA-RP-v1.1", "Kimodo-SOMA-SEED-v1.1", "Kimodo-SOMA-RP-v1"),
         default_value=0,
-        help="Kimodo checkpoint. RP conditions on a rest pose; SEED uses a fixed seed for "
-             "reproducible results.",
+        help="Kimodo checkpoint.<br><b>RP</b> conditions on a rest pose.<br><b>SEED</b> uses a "
+             "fixed seed for reproducible results.",
     ))
     gen.addParmTemplate(hou.ButtonParmTemplate(
         "generate", "Generate",
@@ -633,7 +635,7 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
         script_callback_language=hou.scriptLanguage.Python,
         join_with_next=True,
         help="Send the prompt to the server. Runs in the background; the node recooks when "
-             "the clip has downloaded.",
+             "the clip has downloaded.<br>Progress shows in <b>Status</b> and under the node.",
     ))
     gen.addParmTemplate(hou.ButtonParmTemplate(
         "cancel", "Cancel",
@@ -645,14 +647,17 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
     gen.addParmTemplate(hou.ToggleParmTemplate(
         "force", "Force Regenerate",
         default_value=False,
-        help="Bypass the server cache and run inference again even if an identical prompt, "
-             "duration, model and constraints were generated before.",
+        help="Bypass the server cache and run inference again even if an identical "
+             "<i>prompt + duration + model + constraints</i> was generated before.",
     ))
     gen.addParmTemplate(hou.StringParmTemplate(
         "status", "Status", 1,
         default_value=("",),
         disable_when=always_off,
-        help="Live job state: Queued, Running (Ns), Downloading, Done (Ns), Failed, Cancelled.",
+        help="Live job state: <code>Queued</code>, <code>Running (Ns)</code>, "
+             "<code>Downloading</code>, <code>Done (Ns)</code>, <code>Done (cached)</code>, "
+             "<code>Failed</code>, <code>Cancelled</code>.<br>Also shows the "
+             "<b>Test Connection</b> result.",
     ))
     gen.addParmTemplate(hou.StringParmTemplate(
         "clip_info", "Clip", 1,
@@ -681,8 +686,9 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
         default_value=("",),
         tags={"editor": "1", "editorlines": "3-8"},
         help="Optional inline Kimodo constraints JSON (a list of constraint dicts). "
-             "Takes precedence over Constraints File. Example root path:\n"
-             '[{"type": "root2d", "frame_indices": [0, 90], "smooth_root_2d": [[0,0],[2,1]]}]',
+             "Takes precedence over <b>Constraints File</b>.<br><br><b>Example root path</b><br>"
+             '<code>[{"type": "root2d", "frame_indices": [0, 90], '
+             '"smooth_root_2d": [[0,0],[2,1]]}]</code>',
     ))
     con.addParmTemplate(js)
     pose = hou.FolderParmTemplate("grp_pose", "Pose Keyframes (input 1)", folder_type=hou.folderType.Collapsible,
@@ -697,8 +703,8 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
     pose.addParmTemplate(hou.StringParmTemplate(
         "pose_keyframes", "Pose Keyframes", 1,
         default_value=("",),
-        help="Frame numbers to sample the input-1 skeleton at, e.g. `0 45 89`. Empty = no "
-             "pose constraint.",
+        help="Frame numbers to sample the input-1 skeleton at, e.g. <code>0 45 89</code>.<br>"
+             "Empty = no pose constraint.",
     ))
     pose.addParmTemplate(hou.MenuParmTemplate(
         "pose_type", "Pose Constraint",
@@ -727,8 +733,8 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
         default_expression=("$FSTART",),
         default_expression_language=(hou.scriptLanguage.Hscript,),
         min=-1000, max=1000, min_is_strict=False, max_is_strict=False,
-        help="Scene frame on which the clip begins. The first sample holds before it, "
-             "the last sample holds after the clip ends.",
+        help="Scene frame on which the clip begins.<br>The <b>first</b> sample holds before it, "
+             "the <b>last</b> sample holds after the clip ends.",
     ))
     out.addParmTemplate(hou.StringParmTemplate(
         "npz_path", "NPZ Path", 1,
@@ -745,15 +751,15 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
         "retime", "Retime to Scene FPS",
         default_value=True,
         help="Map clip samples onto scene frames so the clip keeps its real duration at any "
-             "$FPS (nearest sample, no blending). Off = one clip sample per scene frame, so a "
-             "30 fps clip plays slow at 24 fps.",
+             "<code>$FPS</code> (nearest sample, no blending).<br><b>Off</b> = one clip sample "
+             "per scene frame, so a 30 fps clip plays slow at 24 fps.",
     ))
     adv.addParmTemplate(hou.IntParmTemplate(
         "source_fps", "Clip FPS", 1,
         default_value=(_KIMODO_FPS,), min=1, max=120,
-        help="Frame rate Kimodo generated the clip at: 30 for the SOMA models. This is a "
-             "property of the model, not of your scene; do not set it to $FPS or Retime "
-             "becomes a no-op.",
+        help="Frame rate Kimodo generated the clip at: <code>30</code> for the SOMA models.<br>"
+             "A property of the <b>model</b>, not of your scene. Do <b>not</b> set it to "
+             "<code>$FPS</code> or Retime becomes a no-op.",
     ))
     out.addParmTemplate(adv)
     ptg.append(out)
@@ -764,7 +770,8 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
         "server_url", "API Server URL", 1,
         default_value=("http://localhost:8001",),
         join_with_next=True,
-        help="URL of the running kimodo_server. Point at the GPU host if it runs elsewhere.",
+        help="URL of the running <code>kimodo_server</code>, e.g. "
+             "<code>http://localhost:8001</code>.<br>Point at the GPU host if it runs elsewhere.",
     ))
     srv.addParmTemplate(hou.ButtonParmTemplate(
         "test_connection", "Test Connection",
