@@ -10,3 +10,6 @@
 
 # Houdini unpacked HDA sections — must stay LF for hotl to repack correctly
 hda/**/* text eol=lf
+
+# Gzipped section inside the expanded HDA is binary; never normalise its bytes
+hda/**/*.gz binary
