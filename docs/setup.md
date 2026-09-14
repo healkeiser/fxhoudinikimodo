@@ -147,12 +147,11 @@ curl http://localhost:8001/health     # {"status":"ok","mock_mode":false}
 
 ## 6. Houdini Python packages
 
-```bash
-# Linux / macOS
-$HFS/bin/hython -m pip install requests scipy numpy
-# Windows (adjust the HFS path)
-"C:\Program Files\Side Effects Software\Houdini 22.0.xxx\bin\hython.exe" -m pip install requests scipy numpy
-```
+None to install. The node only needs `requests` and `numpy`, both shipped inside Houdini, and
+the timeline panel's code is put on `PYTHONPATH` by the package file. Do **not** `pip install`
+into Houdini's Python or into your user site-packages: Houdini imports both, and a stray wheel
+there can crash Houdini at startup. Extra Python belongs in a folder added to `PYTHONPATH`
+through a Houdini package.
 
 ## 7. Install & use the HDA
 

@@ -144,9 +144,9 @@ On Windows, add a `.env` next to the compose file with `HF_HOME=C:/Users/<you>/.
 
 ### Houdini
 
-```shell
-"C:\Program Files\Side Effects Software\Houdini 22.0.xxx\bin\hython.exe" -m pip install requests scipy numpy
-```
+No Python packages to install: the node uses `requests` and `numpy`, which ship with Houdini,
+and the timeline panel's code is put on `PYTHONPATH` by the package file. Never `pip install`
+into Houdini's Python or your user site-packages.
 
 Copy `fxhoudinikimodo.json` into `$HOUDINI_USER_PREF_DIR/packages/` and set `KIMODO_BRIDGE_ROOT` in it to this repo's absolute path. Restart Houdini. The node appears under **Tab ▸ Kimodo**.
 
