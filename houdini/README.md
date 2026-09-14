@@ -142,6 +142,22 @@ Typical uses: locking a foot in place while `contact == 1` to kill foot skating,
 detecting the `0` → `1` transition as a footstep event to drive dust, decals or audio
 cues.
 
+### Timeline panel
+
+**Open Timeline** (Generate tab) opens the **Kimodo Timeline** Python Panel bound to the selected
+node. It edits a hidden `timeline_json` parm: ordered prompt segments (scene frames each), a
+transition length (clip samples blended at each boundary), and pose tracks (Full Body, L/R Hand,
+L/R Foot) holding scene frames at which the posed skeleton on input 1 is sampled. While a
+timeline exists it owns Duration, Pose Keyframes and Pose Constraint; **Detach timeline** in the
+panel hands them back. Every edit is one undo step. Details: [docs/timeline-design.md](../docs/timeline-design.md).
+
+| Where | Action | Result |
+|---|---|---|
+| Prompt block | drag body / drag right edge | reorder / resize |
+| Prompt block | double-click, right-click | edit text; add after, split at playhead, delete |
+| Track row | right-click, drag key | add or delete key; move key |
+| Ruler | click or drag | set the Houdini frame |
+
 ### Constraints (optional)
 
 [Kimodo constraints](https://research.nvidia.com/labs/sil/projects/kimodo/docs/key_concepts/constraints.html)

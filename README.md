@@ -60,6 +60,7 @@ This is a fork of [chordee/kimodo-houdini-bridge](https://github.com/chordee/kim
 | Area | What you get |
 |------|--------------|
 | **Prompt to motion** | Multi-line prompt, duration in scene frames, model choice, one Generate button. Runs in the background; the node recooks when the clip lands. |
+| **Timeline panel** | Dockable Python Panel: prompt segments laid end to end (drag to resize or reorder, double-click to edit, split at playhead), Kimodo transition length, and Full Body / hand / foot pose tracks with draggable keys. Everything is stored on the node and undoable. |
 | **SideFX output order** | 0 Rest Geometry, 1 Capture Pose, 2 Animated Pose, 3 T-Pose. `kinefx::jointdeform` wires 0 → 0, 1 → 1, 2 → 2. |
 | **Timing that matches your scene** | Kimodo samples at 30 fps. Start Frame (default `$FSTART`) and Retime to Scene FPS keep a 3 s clip at 3 s whether you work at 24, 25 or 30. |
 | **Constraints** | Root path from any curve or points on input 0. Full-body or hand/foot pose keyframes from a posed skeleton on input 1, with a Create Pose Rig button. Raw Kimodo constraint JSON if you prefer. |
@@ -156,7 +157,8 @@ Copy `fxhoudinikimodo.json` into `$HOUDINI_USER_PREF_DIR/packages/` and set `KIM
 2. Type a prompt, set **Duration (frames)**, press **Generate**. The status under the node goes Queued → Running → Done and the node recooks. A 3 s clip takes about 40 s on an RTX 4090; identical requests return from cache instantly.
 3. Wire a **Joint Deform**: outputs 0, 1, 2 into inputs 0, 1, 2. Scrub.
 4. To steer: connect a curve to input 0 for a root path, or press **Create Pose Rig**, pose it, list the frames in **Pose Keyframes**.
-5. To put the motion on your own character: **Biped Setup** on both skeletons, **Biped Retarget**, then your deformer. Feed output 3 (T-Pose) through a **Rig Stash Pose** to give Biped Setup a clean rest pose; do not let it synthesise one from the walk.
+5. For several actions in one clip press **Open Timeline**: right-click the prompt row to add segments, drag their edges to time them, set **Transition**, and add keys on the Full Body or limb tracks (targets come from the posed rig on input 1). **Generate** from the panel or the node. Design notes: [docs/timeline-design.md](docs/timeline-design.md).
+6. To put the motion on your own character: **Biped Setup** on both skeletons, **Biped Retarget**, then your deformer. Feed output 3 (T-Pose) through a **Rig Stash Pose** to give Biped Setup a clean rest pose; do not let it synthesise one from the walk.
 
 Parameter by parameter: [houdini/README.md](houdini/README.md).
 
@@ -175,6 +177,8 @@ Read by `docker-compose.bridge.yaml`:
 | `HF_HUB_OFFLINE` | `1` | Load weights from the local cache only; set `0` for a one-time download. |
 | `TEXT_ENCODERS_DIR` | — | Local folder of LLM2Vec adapters, when you cannot pull Meta's repo directly. |
 
+The Houdini package (`fxhoudinikimodo.json`) adds `houdini/` to `HOUDINI_PATH` (otls, python_panels) and `houdini/python` to `PYTHONPATH` (the timeline panel's code).
+
 <!-- DEVELOPMENT -->
 ## Development
 
@@ -190,6 +194,8 @@ hython scripts/create_hda.py
 # 3. help card, saved expanded into houdini/otls/
 hython scripts/_add_help.py
 ```
+
+Timeline panel: `houdini/python/kimodo_timeline/` (`model.py` is pure Python, run `python tests/test_timeline_model.py`; `bridge.py` talks to the node; `widget.py` is the PySide6 view) and `houdini/python_panels/kimodo_timeline.pypanel`.
 
 In a running Houdini, reload with `hou.hda.reloadFile(...)` and call `matchCurrentDefinition()` on existing nodes. Anything changed in Type Properties by hand is overwritten on the next rebuild, so fold it into the script instead. The node icon is `scripts/kimodo_icon.svg`.
 
