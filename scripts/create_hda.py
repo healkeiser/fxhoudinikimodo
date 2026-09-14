@@ -167,10 +167,33 @@ import numpy as np
 node         = kwargs["node"]
 url          = node.parm("server_url").eval().rstrip("/")
 download_dir = node.parm("download_dir").eval()
-# Duration is authored in scene frames; Kimodo wants seconds.
-duration_s   = node.parm("duration_frames").eval() / hou.fps()
+fps          = hou.fps()
+source_fps   = node.parm("source_fps").eval() or 30
+start_frame  = node.parm("start_frame").eval()
+retime       = bool(node.parm("retime").eval())
+
+def to_sample(scene_frame):
+    # Scene frame -> 0-based clip sample index, the unit Kimodo constraints use.
+    f = scene_frame - start_frame
+    return max(0, int(round(f * source_fps / fps))) if retime else max(0, int(f))
+
+# Timeline (from the Kimodo Timeline panel) or the single Prompt + Duration.
+timeline = None
+raw_tl = node.parm("timeline_json").eval().strip()
+if raw_tl:
+    timeline = json.loads(raw_tl)
+    if not timeline.get("segments"):
+        timeline = None
+if timeline:
+    segments = [{"prompt": s["prompt"].strip(), "duration": s["frames"] / fps} for s in timeline["segments"]]
+    duration_s = sum(s["duration"] for s in segments)
+else:
+    segments = None
+    duration_s = node.parm("duration_frames").eval() / fps   # scene frames -> seconds
 
 try:
+    if segments and any(not s["prompt"] for s in segments):
+        raise ValueError("Every timeline segment needs a prompt.")
     # Optional Kimodo constraints: the inline JSON wins; otherwise read the file.
     raw = node.parm("constraints_json").eval().strip()
     if not raw:
@@ -216,16 +239,15 @@ try:
     # transform = (grot @ tp).T, so grot = (transform.T) @ tp.T  (tp = TPOSE_ROTS).
     # Positions are already Kimodo-global. The server builds the constraint via the
     # FullBody/EndEffector constructor (same path Kimodo's demo uses).
-    kf = node.parm("pose_keyframes").eval().strip()
-    if len(ins) > 1 and ins[1] is not None and kf:
-        frames = [int(x) for x in kf.replace(",", " ").split()]
+    def sample_pose(scene_frames):
+        # Read the posed SOMA77 skeleton on input 1 at each scene frame.
         m = node.type().hdaModule()
         joints = list(m.SOMA77_JOINTS)
         tp = np.asarray(m.TPOSE_ROTS, dtype=float).reshape(-1, 3, 3)
         idx = {n: i for i, n in enumerate(joints)}
         src = ins[1]
         pos_kf, rot_kf, sr_kf = [], [], []
-        for f in frames:
+        for f in scene_frames:
             g = src.geometryAtFrame(f)
             if g.findPointAttrib("name") is None:
                 raise ValueError("Pose input must be a SOMA77 skeleton with a `name` point attribute.")
@@ -246,44 +268,72 @@ try:
             rot_kf.append(R)
             hips = P[idx["Hips"]]
             sr_kf.append([hips[0], hips[2]])
-        is_ee = node.parm("pose_type").evalAsString() == "End-Effector"
-        cdict = {"frame_indices": frames,
-                 "global_joints_positions": pos_kf,
-                 "global_joints_rots": rot_kf,
-                 "smooth_root_2d": sr_kf}
-        if is_ee:
-            names = [jn for parm, jn in (("ee_left_hand", "LeftHand"), ("ee_right_hand", "RightHand"),
-                                         ("ee_left_foot", "LeftFoot"), ("ee_right_foot", "RightFoot"))
-                     if node.parm(parm).eval()]
-            if not names:
-                raise ValueError("End-Effector pose constraint: select at least one joint (hand/foot).")
-            cdict["type"] = "ee-global"
-            cdict["joint_names"] = names
-        else:
-            cdict["type"] = "fullbody-global"
-        constraints = (constraints or []) + [cdict]
+        return {"frame_indices": [to_sample(f) for f in scene_frames],
+                "global_joints_positions": pos_kf,
+                "global_joints_rots": rot_kf,
+                "smooth_root_2d": sr_kf}
 
-    resp = requests.post(
-        f"{url}/generate",
-        json={
-            "prompt":      node.parm("prompt").eval().strip(),
-            "duration":    duration_s,
-            "model":       node.parm("model").evalAsString(),
-            "force":       bool(node.parm("force").eval()),
-            "constraints": constraints,
-        },
-        timeout=30,
-    )
+    has_pose_input = len(ins) > 1 and ins[1] is not None
+    if timeline:
+        # One constraint per non-empty track: fullbody pins everything, a limb track pins
+        # that joint only (ee-global with a single joint name).
+        tracks = {t: sorted(int(k) for k in ks) for t, ks in (timeline.get("tracks") or {}).items() if ks}
+        if tracks and not has_pose_input:
+            raise ValueError("The timeline has pose keys but nothing is wired to input 1 (posed skeleton).")
+        for track, keys in tracks.items():
+            cdict = sample_pose(keys)
+            if track == "fullbody":
+                cdict["type"] = "fullbody-global"
+            else:
+                cdict["type"] = "ee-global"
+                cdict["joint_names"] = [track]
+            constraints = (constraints or []) + [cdict]
+    else:
+        kf = node.parm("pose_keyframes").eval().strip()
+        if has_pose_input and kf:
+            frames = [int(x) for x in kf.replace(",", " ").split()]
+            cdict = sample_pose(frames)
+            if node.parm("pose_type").evalAsString() == "End-Effector":
+                names = [jn for parm, jn in (("ee_left_hand", "LeftHand"), ("ee_right_hand", "RightHand"),
+                                             ("ee_left_foot", "LeftFoot"), ("ee_right_foot", "RightFoot"))
+                         if node.parm(parm).eval()]
+                if not names:
+                    raise ValueError("End-Effector pose constraint: select at least one joint (hand/foot).")
+                cdict["type"] = "ee-global"
+                cdict["joint_names"] = names
+            else:
+                cdict["type"] = "fullbody-global"
+            constraints = (constraints or []) + [cdict]
+
+    payload = {
+        "model":       node.parm("model").evalAsString(),
+        "force":       bool(node.parm("force").eval()),
+        "constraints": constraints,
+    }
+    if segments:
+        payload["segments"] = segments
+        payload["transition_frames"] = int(timeline.get("transition_frames", 5))
+    else:
+        payload["prompt"] = node.parm("prompt").eval().strip()
+        payload["duration"] = duration_s
+    resp = requests.post(f"{url}/generate", json=payload, timeout=30)
+    if resp.status_code == 422 and segments:
+        raise ValueError("Server rejected the timeline request; it may predate multi-prompt support. "
+                         "Update kimodo_server.py and restart the api container.\n" + resp.text[:300])
     resp.raise_for_status()
 except Exception as e:
-    hou.ui.displayMessage(str(e), severity=hou.severityType.Error, title="Kimodo")
     node.parm("status").set(f"Error: {e}")
+    if hou.isUIAvailable():
+        hou.ui.displayMessage(str(e), severity=hou.severityType.Error, title="Kimodo")
+    else:
+        print("Kimodo:", e)
 else:
     job_id = resp.json()["job_id"]
     node.parm("job_id").set(job_id)
     node.parm("status").set(f"Queued ({job_id[:8]}...)")
-    hou.ui.setStatusMessage("Kimodo: generation started, watch the node's Status field.",
-                            severity=hou.severityType.ImportantMessage)
+    if hou.isUIAvailable():
+        hou.ui.setStatusMessage("Kimodo: generation started, watch the node's Status field.",
+                                severity=hou.severityType.ImportantMessage)
 
     def _poll():
         # HOM/UI calls are not thread-safe: marshal them to the main thread.
@@ -291,12 +341,15 @@ else:
         def _set(parm, val):
             hdefereval.executeInMainThreadWithResult(lambda: node.parm(parm).set(val))
         def _msg(text, severity=None):
+            if not hou.isUIAvailable():
+                print("Kimodo:", text); return
             if severity is None:
                 hdefereval.executeDeferred(lambda: hou.ui.displayMessage(text, title="Kimodo"))
             else:
                 hdefereval.executeDeferred(lambda: hou.ui.displayMessage(text, severity=severity, title="Kimodo"))
         def _statusbar(text, severity=hou.severityType.ImportantMessage):
-            hdefereval.executeDeferred(lambda: hou.ui.setStatusMessage(text, severity=severity))
+            if hou.isUIAvailable():
+                hdefereval.executeDeferred(lambda: hou.ui.setStatusMessage(text, severity=severity))
         fails = 0
         while True:
             time.sleep(5)
@@ -497,6 +550,32 @@ finally:
         pass
 '''
 
+# Open Timeline: focus an existing Kimodo Timeline pane tab or float a new one, and select
+# this node so the panel picks it up.
+_OPEN_TIMELINE_CB = r"""
+import hou
+node = kwargs["node"]
+node.setSelected(True, clear_all_selected=True)
+desk = hou.ui.curDesktop()
+tab = None
+for pt in desk.paneTabs():
+    if pt.type() == hou.paneTabType.PythonPanel:
+        iface = pt.activeInterface()
+        if iface is not None and iface.name() == "kimodo_timeline":
+            tab = pt
+            break
+if tab is None:
+    iface = hou.pypanel.interfaceByName("kimodo_timeline")
+    if iface is None:
+        hou.ui.displayMessage("Kimodo Timeline panel not found.\nIs houdini/python_panels on your HOUDINI_PATH (fxhoudinikimodo package)?",
+                              severity=hou.severityType.Error, title="Kimodo")
+    else:
+        tab = desk.createFloatingPaneTab(hou.paneTabType.PythonPanel, size=(1100, 420))
+        tab.setActiveInterface(iface)
+if tab is not None:
+    tab.setIsCurrentTab()
+"""
+
 # Runs when a node of this type is created: colour + shape so it reads as a generator.
 _ON_CREATED = r"""
 node = kwargs["node"]
@@ -604,6 +683,7 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
     # ── parameter interface ──────────────────────────────────────────────────
     ptg = hou.ParmTemplateGroup()   # start fresh — no inherited subnet parms
     always_off = '{ status != "__never__" }'   # disablewhen that is always true: read-only field
+    timeline_owns = '{ has_timeline == 1 }'   # the Timeline panel drives these while it has data
 
     # Tab: Generate — the everyday controls.
     gen = hou.FolderParmTemplate("fld_generate", "Generate", folder_type=hou.folderType.Tabs)
@@ -613,10 +693,19 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
         tags={"editor": "1", "editorlines": "4-8"},
         help=_PROMPT_HELP,
     ))
+    gen.addParmTemplate(hou.ButtonParmTemplate(
+        "open_timeline", "Open Timeline",
+        script_callback=_OPEN_TIMELINE_CB,
+        script_callback_language=hou.scriptLanguage.Python,
+        help="Open the <b>Kimodo Timeline</b> panel for this node: prompt segments laid end to "
+             "end, transitions, and Full Body / hand / foot pose tracks.<br>While a timeline "
+             "exists it owns Duration and the pose parameters below.",
+    ))
     gen.addParmTemplate(hou.IntParmTemplate(
         "duration_frames", "Duration (frames)", 1,
         default_value=(72,),
         min=12, max=720, min_is_strict=False, max_is_strict=False,
+        disable_when=timeline_owns,
         help="Length of the clip in <b>scene frames</b> at the current <code>$FPS</code> "
              "(<code>72</code> = 3 s at 24 fps).<br>Converted to seconds for Kimodo, which "
              "generates at 30 fps; with <b>Retime to Scene FPS</b> on you get back exactly this "
@@ -703,18 +792,19 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
     pose.addParmTemplate(hou.StringParmTemplate(
         "pose_keyframes", "Pose Keyframes", 1,
         default_value=("",),
+        disable_when=timeline_owns,
         help="Frame numbers to sample the input-1 skeleton at, e.g. <code>0 45 89</code>.<br>"
-             "Empty = no pose constraint.",
+             "Empty = no pose constraint. Disabled while the Timeline panel owns the keys.",
     ))
     pose.addParmTemplate(hou.MenuParmTemplate(
         "pose_type", "Pose Constraint",
         ("Full-Body", "End-Effector"),
         default_value=0,
-        disable_when='{ pose_keyframes == "" }',
+        disable_when='{ pose_keyframes == "" } ' + timeline_owns,
         help="How to use the posed skeleton on input 1: constrain the whole body, "
              "or only the selected hands/feet.",
     ))
-    pose_ee = '{ pose_type != "End-Effector" } { pose_keyframes == "" }'
+    pose_ee = '{ pose_type != "End-Effector" } { pose_keyframes == "" } ' + timeline_owns
     pose.addParmTemplate(hou.ToggleParmTemplate("ee_left_hand", "Left Hand", default_value=False,
                                                 disable_when=pose_ee, join_with_next=True))
     pose.addParmTemplate(hou.ToggleParmTemplate("ee_right_hand", "Right Hand", default_value=True,
@@ -790,6 +880,11 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
 
     # Hidden plumbing.
     ptg.append(hou.StringParmTemplate("job_id", "Job ID", 1, default_value=("",), is_hidden=True))
+    ptg.append(hou.StringParmTemplate("timeline_json", "Timeline", 1, default_value=("",), is_hidden=True,
+                                      tags={"editor": "1"}))
+    # Mirror of "timeline_json is non-empty" for disablewhen rules (a JSON blob is not a
+    # value the conditional parser can compare against).
+    ptg.append(hou.ToggleParmTemplate("has_timeline", "Has Timeline", default_value=False, is_hidden=True))
     ptg.append(hou.IntParmTemplate(
         "frame_ref", "Frame", 1,
         default_expression=("$F",),
