@@ -114,8 +114,8 @@ def _infer_resident(req: "GenerateRequest", out_path: pathlib.Path) -> None:
     from kimodo.exports.motion_io import save_kimodo_npz
 
     model = _ensure_model(req.model)
-    texts = [req.prompt]
-    num_frames = [int(float(req.duration) * model.fps)]
+    texts, durations = req.texts_and_durations()
+    num_frames = [max(1, int(d * model.fps)) for d in durations]
     constraint_lst = _build_constraints(req.constraints, model)
     output = model(
         texts,
@@ -123,7 +123,7 @@ def _infer_resident(req: "GenerateRequest", out_path: pathlib.Path) -> None:
         num_denoising_steps=100,
         num_samples=1,
         multi_prompt=True,
-        num_transition_frames=5,
+        num_transition_frames=max(1, int(req.transition_frames)),
         post_processing=True,
         constraint_lst=constraint_lst,
         return_numpy=True,
@@ -148,12 +148,28 @@ app = FastAPI(title="Kimodo API", lifespan=lifespan)
 
 
 class GenerateRequest(BaseModel):
-    prompt: str
+    prompt: str = ""
     duration: float = 3.0
     model: str = "soma-rp"
     num_samples: int = 1
     force: bool = False          # bypass the cache and re-run inference
     constraints: Optional[list] = None   # Kimodo constraint dicts (type/frame_indices/...)
+    # Multi-prompt timeline: ordered segments [{"prompt": str, "duration": seconds}, ...].
+    # When given, `prompt`/`duration` are ignored and Kimodo blends consecutive segments
+    # over `transition_frames` clip samples at each boundary.
+    segments: Optional[list] = None
+    transition_frames: int = 5
+
+    def texts_and_durations(self) -> tuple[list, list]:
+        if self.segments:
+            texts = [str(s.get("prompt", "")).strip() for s in self.segments]
+            durs = [float(s.get("duration", 0.0)) for s in self.segments]
+            if not all(texts) or not all(d > 0 for d in durs):
+                raise ValueError("Every segment needs a non-empty prompt and a duration > 0.")
+            return texts, durs
+        if not self.prompt.strip():
+            raise ValueError("Either `prompt` or `segments` is required.")
+        return [self.prompt], [float(self.duration)]
 
 
 class JobStatus(BaseModel):
@@ -168,12 +184,21 @@ class JobStatus(BaseModel):
     cached: Optional[bool] = None    # True if served from a cached NPZ
 
 
-def _cache_key(prompt: str, duration: float, model: str, constraints=None) -> str:
-    payload = json.dumps(
-        {"prompt": prompt, "duration": duration, "model": model, "constraints": constraints},
-        sort_keys=True,
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+def _cache_key(req: "GenerateRequest") -> str:
+    """Identical requests share one NPZ. Single-prompt keys are unchanged from before the
+    timeline existed; segment requests add their own fields."""
+    payload = {"prompt": req.prompt, "duration": req.duration, "model": req.model,
+               "constraints": req.constraints}
+    if req.segments:
+        payload["segments"] = req.segments
+        payload["transition_frames"] = req.transition_frames
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _describe(req: "GenerateRequest") -> str:
+    if req.segments:
+        return " | ".join(str(s.get("prompt", "")) for s in req.segments)
+    return req.prompt
 
 
 @app.get("/health")
@@ -200,11 +225,16 @@ def download_job(job_id: str) -> FileResponse:
 
 @app.post("/generate", status_code=202)
 async def generate(req: GenerateRequest) -> JobStatus:
+    try:
+        req.texts_and_durations()   # validate prompt/segments before queuing
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    desc = _describe(req)
     job_id = uuid.uuid4().hex
-    _jobs[job_id] = {"status": "queued", "started_at": _time.monotonic(), "prompt": req.prompt}
+    _jobs[job_id] = {"status": "queued", "started_at": _time.monotonic(), "prompt": desc}
     asyncio.create_task(_run_job(job_id, req))
-    log.info("[JOB] %s queued — prompt='%s'", job_id[:8], req.prompt)
-    return JobStatus(job_id=job_id, status="queued", prompt=req.prompt)
+    log.info("[JOB] %s queued — prompt='%s'", job_id[:8], desc)
+    return JobStatus(job_id=job_id, status="queued", prompt=desc)
 
 
 @app.get("/jobs/{job_id}")
@@ -262,7 +292,7 @@ async def _run_job(job_id: str, req: GenerateRequest) -> None:
                        elapsed=round(_time.monotonic() - job["started_at"], 1))
             return
 
-        out_path = OUTPUT_DIR / f"{_cache_key(req.prompt, req.duration, req.model, req.constraints)}.npz"
+        out_path = OUTPUT_DIR / f"{_cache_key(req)}.npz"
 
         if not req.force and out_path.exists():
             data = np.load(out_path)
@@ -278,7 +308,7 @@ async def _run_job(job_id: str, req: GenerateRequest) -> None:
             if job.get("status") == "cancelled":
                 job["elapsed"] = round(_time.monotonic() - job["started_at"], 1)
                 return
-            log.info("[GEN] %s prompt=%r", job_id[:8], req.prompt)
+            log.info("[GEN] %s prompt=%r", job_id[:8], _describe(req))
             await asyncio.to_thread(_infer_resident, req, out_path)
         if job.get("status") == "cancelled":  # cancelled while inference ran
             job["elapsed"] = round(_time.monotonic() - job["started_at"], 1)
@@ -292,7 +322,8 @@ async def _run_job(job_id: str, req: GenerateRequest) -> None:
         data = np.load(out_path)
         T, J = data["posed_joints"].shape[:2]
         out_path.with_suffix(".json").write_text(json.dumps({
-            "prompt": req.prompt, "duration": req.duration, "model": req.model,
+            "prompt": _describe(req), "duration": req.duration, "model": req.model,
+            "segments": req.segments, "transition_frames": req.transition_frames,
             "frames": int(T), "joints": int(J), "created": _time.time(),
         }, indent=2))
         log.info("[DONE] %s — %d frames, %d joints, %.1fs", job_id[:8], T, J, elapsed)
