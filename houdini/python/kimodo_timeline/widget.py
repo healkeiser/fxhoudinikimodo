@@ -1,4 +1,11 @@
-"""Kimodo Timeline: PySide6 view over model.Timeline, bound to a Kimodo Motion node."""
+"""Kimodo Timeline: PySide6 view over model.Timeline, bound to a Kimodo Motion node.
+
+View controls follow the usual DCC timeline conventions:
+  wheel            zoom around the cursor
+  middle-drag      pan
+  F / Home / Fit   fit the whole timeline
+  left-drag ruler  scrub the Houdini frame
+"""
 from __future__ import annotations
 
 import hou
@@ -15,7 +22,8 @@ TRACK_H = 20
 PAD_R = 12
 EDGE_GRAB = 6        # px from a segment's right edge that counts as "resize"
 KEY_R = 6            # key marker half-size
-MIN_PX_PER_FRAME = 0.5
+MIN_PPF, MAX_PPF = 0.25, 240.0   # zoom limits, pixels per frame
+FIT_MARGIN = 0.15                # fit leaves this much of the total free on the right
 
 SEG_COLORS = [QtGui.QColor(c) for c in ("#3b7dd8", "#d65a5a", "#3faa6d", "#d9a13a", "#8a5fd3", "#2fa9b8")]
 TRACK_COLORS = {
@@ -25,7 +33,7 @@ TRACK_COLORS = {
 }
 BG = QtGui.QColor("#2b2b2b"); ROW_BG = QtGui.QColor("#333333"); GRID = QtGui.QColor("#454545")
 TEXT = QtGui.QColor("#e6e6e6"); DIM = QtGui.QColor("#9a9a9a"); PLAYHEAD = QtGui.QColor("#ff5252")
-WHITE = QtGui.QColor("#ffffff")
+WHITE = QtGui.QColor("#ffffff"); OUTSIDE = QtGui.QColor(0, 0, 0, 60)
 
 
 class PromptDialog(QtWidgets.QDialog):
@@ -57,34 +65,70 @@ class Canvas(QtWidgets.QWidget):
         self.tl = Timeline()
         self.start = 1
         self.playhead = 1
-        self._mode = None                 # None | "resize" | "move" | "key" | "scrub"
+        # view state: frame at the left edge of the work zone and pixels per frame
+        self._view_start = 0.0
+        self._ppf = 10.0
+        self._fitted = False
+        # interaction state
+        self._mode = None                 # None | "resize" | "move" | "key" | "scrub" | "pan"
         self._idx = -1                    # segment index being edited
         self._track = None                # track name for key drags
-        self._key = None                  # original key frame for key drags
+        self._key = None                  # current key frame for key drags
         self._drop = None                 # drop index while moving a segment
-        self._hover = None
-        self._ppf_locked = None           # pixels-per-frame frozen during a drag
+        self._pan_x = 0.0
         self.setMouseTracking(True)
+        self.setFocusPolicy(QtCore.Qt.StrongFocus)
         self.setMinimumHeight(RULER_H + PROMPT_H + TRACK_H * len(TRACKS) + 8)
         self.setContextMenuPolicy(QtCore.Qt.DefaultContextMenu)
 
-    # ── geometry helpers ─────────────────────────────────────────────────────
-    def _span(self) -> int:
-        return max(self.tl.total_frames, 24)
+    # ── view ─────────────────────────────────────────────────────────────────
+    def _work_w(self) -> float:
+        return max(1.0, self.width() - GUTTER - PAD_R)
 
-    def _px_per_frame(self) -> float:
-        # Frozen while dragging: a resize changes the total, and re-fitting the view under
-        # the cursor mid-drag makes the bar chase the mouse. Re-fits on release.
-        if self._ppf_locked is not None:
-            return self._ppf_locked
-        return max(MIN_PX_PER_FRAME, (self.width() - GUTTER - PAD_R) / float(self._span()))
+    def fit(self):
+        """Show the whole timeline plus some free room on the right."""
+        span = max(self.tl.total_frames, 24) * (1.0 + FIT_MARGIN)
+        self._ppf = max(MIN_PPF, min(MAX_PPF, self._work_w() / span))
+        self._view_start = self.start - span * 0.02
+        self._fitted = True
+        self.update()
 
     def x_of(self, frame: float) -> float:
-        return GUTTER + (frame - self.start) * self._px_per_frame()
+        return GUTTER + (frame - self._view_start) * self._ppf
 
     def frame_at(self, x: float) -> int:
-        return int(round(self.start + (x - GUTTER) / self._px_per_frame()))
+        return int(round(self._view_start + (x - GUTTER) / self._ppf))
 
+    def zoom(self, factor: float, anchor_x: float):
+        f_anchor = self._view_start + (anchor_x - GUTTER) / self._ppf
+        self._ppf = max(MIN_PPF, min(MAX_PPF, self._ppf * factor))
+        self._view_start = f_anchor - (anchor_x - GUTTER) / self._ppf
+        self._fitted = False
+        self.update()
+
+    def pan(self, dx_px: float):
+        self._view_start -= dx_px / self._ppf
+        self._fitted = False
+        self.update()
+
+    def resizeEvent(self, ev):
+        super().resizeEvent(ev)
+        if self._fitted:
+            self.fit()
+
+    def wheelEvent(self, ev):
+        delta = ev.angleDelta().y() or ev.angleDelta().x()
+        if delta:
+            self.zoom(1.15 ** (delta / 120.0), ev.position().x())
+        ev.accept()
+
+    def keyPressEvent(self, ev):
+        if ev.key() in (QtCore.Qt.Key_F, QtCore.Qt.Key_Home):
+            self.fit()
+        else:
+            super().keyPressEvent(ev)
+
+    # ── geometry helpers ─────────────────────────────────────────────────────
     def _row_of(self, y: float):
         if y < RULER_H:
             return "ruler", None
@@ -104,6 +148,8 @@ class Canvas(QtWidgets.QWidget):
         return out
 
     def _seg_at(self, pos):
+        if pos.x() < GUTTER:
+            return -1, None
         for i, r in enumerate(self._seg_rects()):
             if r.contains(pos):
                 return i, r
@@ -121,32 +167,36 @@ class Canvas(QtWidgets.QWidget):
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         w, h = self.width(), self.height()
         p.fillRect(0, 0, w, h, BG)
-        ppf = self._px_per_frame()
-        end = self.start + self._span()
+        work = QtCore.QRectF(GUTTER, 0, w - GUTTER - PAD_R, h)
 
-        # rows
-        p.fillRect(QtCore.QRectF(GUTTER, RULER_H, w - GUTTER - PAD_R, PROMPT_H), ROW_BG)
+        # row backgrounds + labels (labels outside the clip so they never scroll)
+        p.fillRect(QtCore.QRectF(GUTTER, RULER_H, work.width(), PROMPT_H), ROW_BG)
         for i, t in enumerate(TRACKS):
             y = RULER_H + PROMPT_H + i * TRACK_H
-            p.fillRect(QtCore.QRectF(GUTTER, y, w - GUTTER - PAD_R, TRACK_H), ROW_BG if i % 2 else BG)
-            p.setPen(DIM); p.drawText(QtCore.QRectF(4, y, GUTTER - 8, TRACK_H),
-                                      QtCore.Qt.AlignVCenter | QtCore.Qt.AlignRight, TRACK_LABELS[t])
+            p.fillRect(QtCore.QRectF(GUTTER, y, work.width(), TRACK_H), ROW_BG if i % 2 else BG)
+            p.setPen(DIM)
+            p.drawText(QtCore.QRectF(4, y, GUTTER - 8, TRACK_H), QtCore.Qt.AlignVCenter | QtCore.Qt.AlignRight, TRACK_LABELS[t])
         p.setPen(DIM)
         p.drawText(QtCore.QRectF(4, RULER_H, GUTTER - 8, PROMPT_H), QtCore.Qt.AlignVCenter | QtCore.Qt.AlignRight, "Prompts")
 
+        p.setClipRect(work)
+
+        # outside-the-clip shading (before Start Frame)
+        x_start = self.x_of(self.start)
+        if x_start > GUTTER:
+            p.fillRect(QtCore.QRectF(GUTTER, RULER_H, x_start - GUTTER, h - RULER_H), OUTSIDE)
+
         # ruler + grid: tick every N frames so labels stay ≥ 48 px apart
-        step = 1
+        step = 1200
         for cand in (1, 2, 5, 10, 12, 24, 25, 30, 48, 50, 60, 100, 120, 240, 300, 600):
-            if cand * ppf >= 48:
+            if cand * self._ppf >= 48:
                 step = cand; break
-        else:
-            step = 1200
-        f = self.start - (self.start % step)
-        while f <= end:
-            if f >= self.start:
-                x = self.x_of(f)
-                p.setPen(GRID); p.drawLine(QtCore.QPointF(x, RULER_H), QtCore.QPointF(x, h))
-                p.setPen(TEXT); p.drawText(QtCore.QPointF(x + 3, RULER_H - 7), str(f))
+        f0 = self.frame_at(GUTTER); f1 = self.frame_at(w - PAD_R)
+        f = f0 - (f0 % step)
+        while f <= f1:
+            x = self.x_of(f)
+            p.setPen(GRID); p.drawLine(QtCore.QPointF(x, RULER_H), QtCore.QPointF(x, h))
+            p.setPen(TEXT); p.drawText(QtCore.QPointF(x + 3, RULER_H - 7), str(f))
             f += step
 
         # segments
@@ -159,30 +209,28 @@ class Canvas(QtWidgets.QWidget):
             p.drawRoundedRect(r.adjusted(1, 0, -1, 0), 4, 4)
             seg = self.tl.segments[i]
             secs = seg.frames / bridge.fps()
-            p.setPen(WHITE)
             txt = QtCore.QRectF(r.left() + 6, r.top() + 2, max(0, r.width() - 12), r.height() - 4)
-            p.drawText(txt, QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop | QtCore.Qt.TextSingleLine,
-                       p.fontMetrics().elidedText(seg.prompt or "(empty prompt)", QtCore.Qt.ElideRight, int(txt.width())))
-            p.setPen(QtGui.QColor(255, 255, 255, 170))
-            p.drawText(txt, QtCore.Qt.AlignLeft | QtCore.Qt.AlignBottom, f"{seg.frames} f · {secs:.2f} s")
-            # resize grip
+            if txt.width() > 24:
+                p.setPen(WHITE)
+                p.drawText(txt, QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop | QtCore.Qt.TextSingleLine,
+                           p.fontMetrics().elidedText(seg.prompt or "(empty prompt)", QtCore.Qt.ElideRight, int(txt.width())))
+                p.setPen(QtGui.QColor(255, 255, 255, 170))
+                p.drawText(txt, QtCore.Qt.AlignLeft | QtCore.Qt.AlignBottom, f"{seg.frames} f · {secs:.2f} s")
             p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 120), 2))
             gx = r.right() - 3
             p.drawLine(QtCore.QPointF(gx, r.top() + 8), QtCore.QPointF(gx, r.bottom() - 8))
         if not rects:
             p.setPen(DIM)
-            p.drawText(QtCore.QRectF(GUTTER, RULER_H, w - GUTTER - PAD_R, PROMPT_H), QtCore.Qt.AlignCenter,
+            p.drawText(QtCore.QRectF(GUTTER, RULER_H, work.width(), PROMPT_H), QtCore.Qt.AlignCenter,
                        "Right-click to add a prompt segment")
-        # transition markers between segments
         if self.tl.transition_frames and len(rects) > 1:
             p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 90), 1, QtCore.Qt.DashLine))
             for r in rects[1:]:
                 p.drawLine(QtCore.QPointF(r.left(), RULER_H), QtCore.QPointF(r.left(), RULER_H + PROMPT_H))
-        # drop indicator while moving
         if self._mode == "move" and self._drop is not None:
             starts = self.tl.starts(self.start)
             x = self.x_of(starts[self._drop]) if self._drop < len(starts) else self.x_of(self.start + self.tl.total_frames)
-            p.setPen(QtGui.QPen(QtGui.QColor("#ffffff"), 3))
+            p.setPen(QtGui.QPen(WHITE, 3))
             p.drawLine(QtCore.QPointF(x, RULER_H + 2), QtCore.QPointF(x, RULER_H + PROMPT_H - 2))
 
         # keys
@@ -197,20 +245,20 @@ class Canvas(QtWidgets.QWidget):
 
         # playhead
         x = self.x_of(self.playhead)
-        if GUTTER <= x <= w:
-            p.setPen(QtGui.QPen(PLAYHEAD, 2)); p.drawLine(QtCore.QPointF(x, 0), QtCore.QPointF(x, h))
-            p.setBrush(PLAYHEAD); p.setPen(QtCore.Qt.NoPen)
-            p.drawRect(QtCore.QRectF(x - 14, 2, 28, RULER_H - 6))
-            p.setPen(QtGui.QColor("#ffffff")); p.drawText(QtCore.QRectF(x - 14, 2, 28, RULER_H - 6), QtCore.Qt.AlignCenter, str(self.playhead))
+        p.setPen(QtGui.QPen(PLAYHEAD, 2)); p.drawLine(QtCore.QPointF(x, 0), QtCore.QPointF(x, h))
+        p.setBrush(PLAYHEAD); p.setPen(QtCore.Qt.NoPen)
+        p.drawRect(QtCore.QRectF(x - 14, 2, 28, RULER_H - 6))
+        p.setPen(WHITE); p.drawText(QtCore.QRectF(x - 14, 2, 28, RULER_H - 6), QtCore.Qt.AlignCenter, str(self.playhead))
         p.end()
 
     # ── mouse ────────────────────────────────────────────────────────────────
     def mousePressEvent(self, ev):
+        pos = ev.position()
+        if ev.button() == QtCore.Qt.MiddleButton:
+            self._mode = "pan"; self._pan_x = pos.x(); self.setCursor(QtCore.Qt.ClosedHandCursor); return
         if ev.button() != QtCore.Qt.LeftButton:
             return super().mousePressEvent(ev)
-        pos = ev.position()
         row, track = self._row_of(pos.y())
-        self._ppf_locked = self._px_per_frame()   # freeze the scale for this interaction
         if row == "ruler":
             self._mode = "scrub"; self.frameRequested.emit(self.frame_at(pos.x())); return
         if row == "prompt":
@@ -228,6 +276,8 @@ class Canvas(QtWidgets.QWidget):
 
     def mouseMoveEvent(self, ev):
         pos = ev.position()
+        if self._mode == "pan":
+            self.pan(pos.x() - self._pan_x); self._pan_x = pos.x(); return
         if self._mode == "scrub":
             self.frameRequested.emit(self.frame_at(pos.x())); return
         if self._mode == "resize":
@@ -239,8 +289,7 @@ class Canvas(QtWidgets.QWidget):
             starts = self.tl.starts(self.start)
             drop = len(starts)
             for i, st in enumerate(starts):
-                mid = st + self.tl.segments[i].frames / 2
-                if f < mid:
+                if f < st + self.tl.segments[i].frames / 2:
                     drop = i; break
             self._drop = drop; self.update(); return
         if self._mode == "key":
@@ -260,8 +309,9 @@ class Canvas(QtWidgets.QWidget):
 
     def mouseReleaseEvent(self, ev):
         mode, self._mode = self._mode, None
-        self._ppf_locked = None                  # re-fit the view to the new total
-        if mode == "resize":
+        if mode == "pan":
+            self.setCursor(QtCore.Qt.ArrowCursor)
+        elif mode == "resize":
             self.tl.clamp_keys(self.start); self.edited.emit("Kimodo timeline: resize segment")
         elif mode == "move":
             drop = self._drop if self._drop is not None else self._idx
@@ -276,11 +326,14 @@ class Canvas(QtWidgets.QWidget):
 
     def mouseDoubleClickEvent(self, ev):
         pos = ev.position()
-        if self._row_of(pos.y())[0] == "prompt":
+        row, _ = self._row_of(pos.y())
+        if row == "prompt":
             i, _ = self._seg_at(pos)
             if i >= 0:
                 self._mode = None
                 self.edit_prompt(i)
+        elif row == "ruler":
+            self.fit()
 
     def contextMenuEvent(self, ev):
         pos = QtCore.QPointF(ev.pos())
@@ -308,6 +361,8 @@ class Canvas(QtWidgets.QWidget):
                 menu.addSeparator(); menu.addAction("Clear track", lambda: self.clear_track(track))
         else:
             return
+        menu.addSeparator()
+        menu.addAction("Fit timeline  (F)", self.fit)
         menu.exec(ev.globalPos())
 
     # ── model edits (each ends in one undoable write) ────────────────────────
@@ -349,7 +404,7 @@ class Canvas(QtWidgets.QWidget):
 
 
 class TimelineWidget(QtWidgets.QWidget):
-    """The panel: header (node), canvas, footer (transition, total, Generate, Status)."""
+    """The panel: header (node), canvas, footer (transition, total, Fit, Generate, Status)."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -370,6 +425,8 @@ class TimelineWidget(QtWidgets.QWidget):
         lay.addLayout(head)
 
         self.canvas = Canvas(self)
+        self.canvas.setToolTip("Wheel: zoom · Middle-drag: pan · F: fit · Drag block edge: resize · Drag block: reorder · "
+                               "Double-click: edit · Right-click: add / split / delete")
         self.canvas.edited.connect(self._write)
         self.canvas.frameRequested.connect(bridge.set_frame)
         lay.addWidget(self.canvas, 1)
@@ -384,6 +441,10 @@ class TimelineWidget(QtWidgets.QWidget):
         self.total_label = QtWidgets.QLabel("")
         foot.addWidget(self.total_label)
         foot.addStretch(1)
+        self.fit_btn = QtWidgets.QPushButton("Fit"); self.fit_btn.setToolTip("Show the whole timeline (F)")
+        self.fit_btn.clicked.connect(self.canvas.fit)
+        foot.addWidget(self.fit_btn)
+        foot.addSpacing(12)
         self.status_label = QtWidgets.QLabel("")
         self.status_label.setStyleSheet("color: #9a9a9a")
         foot.addWidget(self.status_label)
@@ -404,10 +465,10 @@ class TimelineWidget(QtWidgets.QWidget):
         node = bridge.find_node()
         try:
             if node is not None and self.node is not None and node.path() == self.node.path():
-                # external change (undo, manual parm edit)? reload
+                # external change (undo, manual parm edit)? reload, keep the view
                 raw = node.parm("timeline_json").eval()
                 if raw != self._last_json:
-                    self._load(node)
+                    self._load(node, keep_view=True)
             elif node is not None:
                 self._load(node)
             elif self.node is not None:
@@ -418,10 +479,11 @@ class TimelineWidget(QtWidgets.QWidget):
         except Exception:
             self.node = None
         enabled = self.node is not None
-        for w in (self.canvas, self.transition, self.gen_btn, self.cancel_btn, self.detach_btn):
+        for w in (self.canvas, self.transition, self.gen_btn, self.cancel_btn, self.detach_btn, self.fit_btn):
             w.setEnabled(enabled)
         if not enabled:
-            self.node_label.setText("Select a Kimodo Motion node"); self.status_label.setText(""); return
+            self.node_label.setText("Select a Kimodo Motion node"); self.node_label.setStyleSheet("font-weight: bold")
+            self.status_label.setText(""); return
         self.canvas.playhead = bridge.current_frame()
         self.canvas.start = bridge.start_frame(self.node)
         self.canvas.update()
@@ -436,13 +498,15 @@ class TimelineWidget(QtWidgets.QWidget):
             self.node_label.setText(self.node.path())
             self.node_label.setStyleSheet("font-weight: bold")
 
-    def _load(self, node):
+    def _load(self, node, keep_view=False):
         self.node = node
         self.canvas.tl = bridge.load(node)
+        self.canvas.start = bridge.start_frame(node)
         self._last_json = node.parm("timeline_json").eval()
-        self.node_label.setText(node.path())
         self.transition.blockSignals(True); self.transition.setValue(self.canvas.tl.transition_frames); self.transition.blockSignals(False)
         self._refresh_total()
+        if not keep_view:
+            self.canvas.fit()
 
     def _refresh_total(self):
         tl = self.canvas.tl

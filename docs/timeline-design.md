@@ -72,6 +72,9 @@ Interactions:
 | Track marker | drag | move (frame-snapped) |
 | Track row | right-click | add key at cursor / delete key |
 | Ruler | click or drag | set Houdini frame |
+| Anywhere | wheel | zoom around the cursor |
+| Anywhere | middle-drag | pan |
+| Anywhere | F, Home, Fit button, double-click ruler | fit the whole timeline, with free room after the last segment |
 | Footer | Transition spin, total label, Generate, live Status | |
 
 The panel follows the current selection (first selected `vb::kimodo_motion*` node) and
@@ -79,5 +82,5 @@ shows an empty state otherwise.
 
 ## Out of scope for v1
 
-Thumbnails, wheel zoom (view always fits the total), per-key target editing inside the panel
+Thumbnails, per-key target editing inside the panel
 (targets come from the posed rig on input 1, as today), root path track (input 0 curve).

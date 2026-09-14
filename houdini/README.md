@@ -157,6 +157,7 @@ panel hands them back. Every edit is one undo step. Details: [docs/timeline-desi
 | Prompt block | double-click, right-click | edit text; add after, split at playhead, delete |
 | Track row | right-click, drag key | add or delete key; move key |
 | Ruler | click or drag | set the Houdini frame |
+| Anywhere | wheel / middle-drag / F or Fit | zoom around the cursor / pan / fit the whole timeline |
 
 ### Constraints (optional)
 
