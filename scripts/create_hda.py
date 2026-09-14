@@ -576,11 +576,9 @@ if tab is not None:
     tab.setIsCurrentTab()
 """
 
-# Runs when a node of this type is created: colour + shape so it reads as a generator.
+# Runs when a node of this type is created: generator shape, default colour.
 _ON_CREATED = r"""
-node = kwargs["node"]
-node.setColor(hou.Color((0.46, 0.73, 0.35)))
-node.setUserData("nodeshape", "bulge")
+kwargs["node"].setUserData("nodeshape", "bulge")
 """
 
 _PROMPT_HELP = (
