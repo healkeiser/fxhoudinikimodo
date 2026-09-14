@@ -109,7 +109,31 @@ def _build_constraints(constraints, model) -> list:
     return (load_constraints_lst(std, skeleton) if std else []) + extra
 
 
-def _infer_resident(req: "GenerateRequest", out_path: pathlib.Path) -> None:
+class _Progress:
+    """Stand-in for tqdm: Kimodo wraps one denoising loop per segment with
+    progress_bar(indices). Measured on the resident server, a segment costs roughly
+    30 s of text encoding (CPU), ~8 s of denoising (GPU) and a few seconds of
+    post-processing, so the fraction is (finished loops + position in the current
+    loop) / segments, and `phase` says which of the three stages is running. Capped
+    below 1 until the NPZ is written."""
+
+    def __init__(self, job: dict, expected_loops: int):
+        self.job, self.expected, self.done_loops = job, max(1, expected_loops), 0
+        self.job["phase"] = "encoding text"
+
+    def __call__(self, iterable, **_):
+        items = list(iterable)
+        n = max(1, len(items))
+        self.job["phase"] = f"denoising segment {self.done_loops + 1}/{self.expected}"
+        for i, it in enumerate(items):
+            self.job["progress"] = min(0.99, (self.done_loops + i / n) / self.expected)
+            yield it
+        self.done_loops += 1
+        self.job["progress"] = min(0.99, self.done_loops / self.expected)
+        self.job["phase"] = "post-processing" if self.done_loops >= self.expected else "encoding text"
+
+
+def _infer_resident(req: "GenerateRequest", out_path: pathlib.Path, job: Optional[dict] = None) -> None:
     """Blocking in-process inference. Mirrors kimodo/scripts/generate.py main()."""
     from kimodo.exports.motion_io import save_kimodo_npz
 
@@ -117,17 +141,32 @@ def _infer_resident(req: "GenerateRequest", out_path: pathlib.Path) -> None:
     texts, durations = req.texts_and_durations()
     num_frames = [max(1, int(d * model.fps)) for d in durations]
     constraint_lst = _build_constraints(req.constraints, model)
-    output = model(
-        texts,
-        num_frames,
-        num_denoising_steps=100,
-        num_samples=1,
-        multi_prompt=True,
-        num_transition_frames=max(1, int(req.transition_frames)),
-        post_processing=True,
-        constraint_lst=constraint_lst,
-        return_numpy=True,
-    )
+    progress = _Progress(job if job is not None else {}, expected_loops=len(texts))
+    # Kimodo's multi-prompt path does not forward `progress_bar` to the sampling loop
+    # (kimodo_model._multiprompt calls self._generate without it), so inject it there.
+    # Inference is serialised by _model_lock, so patching the resident model is safe.
+    orig_generate = model._generate
+
+    def _generate_with_progress(*a, **k):
+        k.setdefault("progress_bar", progress)
+        return orig_generate(*a, **k)
+
+    model._generate = _generate_with_progress
+    try:
+        output = model(
+            texts,
+            num_frames,
+            num_denoising_steps=100,
+            num_samples=1,
+            multi_prompt=True,
+            num_transition_frames=max(1, int(req.transition_frames)),
+            post_processing=True,
+            constraint_lst=constraint_lst,
+            return_numpy=True,
+            progress_bar=progress,
+        )
+    finally:
+        del model._generate          # back to the class method
     n = int(output["posed_joints"].shape[0])
     single = {
         k: (v[0] if hasattr(v, "shape") and len(v.shape) > 0 and v.shape[0] == n else v)
@@ -182,6 +221,8 @@ class JobStatus(BaseModel):
     error: Optional[str] = None
     elapsed: Optional[float] = None
     cached: Optional[bool] = None    # True if served from a cached NPZ
+    progress: Optional[float] = None  # 0..1 while running (denoising steps done / expected)
+    phase: Optional[str] = None       # encoding text | denoising segment k/N | post-processing
 
 
 def _cache_key(req: "GenerateRequest") -> str:
@@ -255,6 +296,8 @@ def job_status(job_id: str) -> JobStatus:
         error=job.get("error"),
         elapsed=round(elapsed, 1) if elapsed is not None else None,
         cached=job.get("cached"),
+        progress=job.get("progress"),
+        phase=job.get("phase"),
     )
 
 
@@ -279,6 +322,7 @@ async def _run_job(job_id: str, req: GenerateRequest) -> None:
         job["elapsed"] = round(_time.monotonic() - job["started_at"], 1)
         return
     job["status"] = "running"
+    job["progress"] = 0.0
 
     try:
         if MOCK_MODE:
@@ -309,7 +353,7 @@ async def _run_job(job_id: str, req: GenerateRequest) -> None:
                 job["elapsed"] = round(_time.monotonic() - job["started_at"], 1)
                 return
             log.info("[GEN] %s prompt=%r", job_id[:8], _describe(req))
-            await asyncio.to_thread(_infer_resident, req, out_path)
+            await asyncio.to_thread(_infer_resident, req, out_path, job)
         if job.get("status") == "cancelled":  # cancelled while inference ran
             job["elapsed"] = round(_time.monotonic() - job["started_at"], 1)
             return
