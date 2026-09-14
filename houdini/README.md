@@ -189,9 +189,18 @@ part of the cache key, so a new constraint set triggers a fresh generation.
 geometry to the node's optional input. Each point's world XZ becomes a `smooth_root_2d`
 target (Houdini XZ maps 1:1 to Kimodo's space — you can trace over the node's own output
 trajectory). Points carrying an integer `frame` point attribute become **sparse waypoints**
-at those frames (you control the timing); otherwise the points, in order (e.g. a resampled
-polyline), are spread evenly across the clip as a **denser path**. The geometry-derived
+at those scene frames (you control the timing; frames are converted to clip samples through
+Start Frame and Retime); otherwise the curve is thinned to **Path Waypoints** points by arc
+length (default 8) and those are spread evenly across the clip. The geometry-derived
 `root2d` is appended to any JSON constraints above.
+
+> A root path is a hard promise about where the pelvis is at each waypoint. A dense path
+> (Path Waypoints = 0, or a resampled curve with many points) pins the root to a constant
+> speed for the whole clip, which fights any segment that should slow down, stop, sit or
+> fall: the character slides along the curve while doing it. Keep waypoints sparse, and for
+> a timeline with stationary segments give the curve points a `frame` attribute that covers
+> only the travelling segment. Check the implied speed too: 5 m over 8 s is 0.6 m/s, a
+> slow walk; ask for a run over that distance and the feet will skate.
 
 #### Pose constraints (input 1)
 
