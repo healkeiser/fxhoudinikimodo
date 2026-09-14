@@ -75,6 +75,12 @@ def _cook():
     node     = hou.pwd()
     hda_node = node.parent()
 
+    # A failed Generate/Test/download leaves its message here; surface it as a node error
+    # (red node, message in the node info) instead of a dialog. Cleared by the next Generate.
+    err = hda_node.parm("last_error").eval().strip()
+    if err:
+        raise hou.NodeError(err)
+
     npz_path = hda_node.parm("npz_path").eval()
     if not npz_path:
         return  # no NPZ yet — output empty geometry, wait for Generate
@@ -171,6 +177,17 @@ fps          = hou.fps()
 source_fps   = node.parm("source_fps").eval() or 30
 start_frame  = node.parm("start_frame").eval()
 retime       = bool(node.parm("retime").eval())
+
+def fail(msg):
+    # Errors live on the node (see the cook script), plus a one-line status bar note.
+    node.parm("last_error").set(str(msg))
+    node.parm("status").set(f"Error: {msg}")
+    if hou.isUIAvailable():
+        hou.ui.setStatusMessage(f"Kimodo: {msg}", severity=hou.severityType.Error)
+    else:
+        print("Kimodo:", msg)
+
+node.parm("last_error").set("")
 
 def to_sample(scene_frame):
     # Scene frame -> 0-based clip sample index, the unit Kimodo constraints use.
@@ -322,11 +339,7 @@ try:
                          "Update kimodo_server.py and restart the api container.\n" + resp.text[:300])
     resp.raise_for_status()
 except Exception as e:
-    node.parm("status").set(f"Error: {e}")
-    if hou.isUIAvailable():
-        hou.ui.displayMessage(str(e), severity=hou.severityType.Error, title="Kimodo")
-    else:
-        print("Kimodo:", e)
+    fail(e)
 else:
     job_id = resp.json()["job_id"]
     node.parm("job_id").set(job_id)
@@ -340,13 +353,8 @@ else:
         import hdefereval, os
         def _set(parm, val):
             hdefereval.executeInMainThreadWithResult(lambda: node.parm(parm).set(val))
-        def _msg(text, severity=None):
-            if not hou.isUIAvailable():
-                print("Kimodo:", text); return
-            if severity is None:
-                hdefereval.executeDeferred(lambda: hou.ui.displayMessage(text, title="Kimodo"))
-            else:
-                hdefereval.executeDeferred(lambda: hou.ui.displayMessage(text, severity=severity, title="Kimodo"))
+        def _fail(text):
+            hdefereval.executeInMainThreadWithResult(lambda: fail(text))
         def _statusbar(text, severity=hou.severityType.ImportantMessage):
             if hou.isUIAvailable():
                 hdefereval.executeDeferred(lambda: hou.ui.setStatusMessage(text, severity=severity))
@@ -359,7 +367,7 @@ else:
             try:
                 r = requests.get(f"{url}/jobs/{job_id}", timeout=10)
                 if r.status_code == 404:
-                    _set("status", "Job lost (server restarted?)")
+                    _fail("Job lost (server restarted?)")
                     _set("job_id", "")
                     break
                 r.raise_for_status()
@@ -369,6 +377,7 @@ else:
                 fails += 1
                 _set("status", f"Poll error ({fails}/3): {e}")
                 if fails >= 3:
+                    _fail(f"Lost contact with the server while polling: {e}")
                     break
                 continue
             status  = data["status"]
@@ -388,8 +397,7 @@ else:
                             for chunk in dl.iter_content(chunk_size=1 << 20):
                                 fh.write(chunk)
                 except Exception as e:
-                    _set("status", f"Download failed: {e}")
-                    _msg(f"NPZ download failed:\n{e}", severity=hou.severityType.Error)
+                    _fail(f"NPZ download failed: {e}")
                     break
                 def _finish():
                     fps = node.parm("source_fps").eval() or 30
@@ -404,11 +412,11 @@ else:
                 hdefereval.executeInMainThreadWithResult(_finish)
                 _statusbar(f"Kimodo: generated {frames} frames ({joints} joints){elapsed_str}.")
                 break
-            elif status in ("failed", "cancelled"):
-                err = data.get("error")
-                _set("status", f"{status.capitalize()}: {err[:60]}" if err else status.capitalize())
-                if status == "failed":
-                    _msg(f"Generation failed:\n{err}", severity=hou.severityType.Error)
+            elif status == "failed":
+                _fail(f"Generation failed: {data.get('error') or 'no detail from server'}")
+                break
+            elif status == "cancelled":
+                _set("status", "Cancelled")
                 break
             else:
                 _set("status", f"Running...{elapsed_str}")
@@ -430,7 +438,8 @@ else:
         r = requests.post(f"{url}/jobs/{job_id}/cancel", timeout=10)
         r.raise_for_status()
     except Exception as e:
-        hou.ui.displayMessage(str(e), severity=hou.severityType.Error, title="Kimodo")
+        node.parm("status").set(f"Cancel failed: {e}")
+        hou.ui.setStatusMessage(f"Kimodo: cancel failed: {e}", severity=hou.severityType.Error)
     else:
         node.parm("status").set("Cancelled")
         node.parm("job_id").set("")
@@ -490,19 +499,21 @@ wired = node.input(1) is None
 if wired:
     node.setInput(1, tip)
 tip.setCurrent(True, clear_all_selected=True)
-hou.ui.displayMessage(
-    "Created an independent A-pose rig%s.\n\nPose / keyframe it, set Pose Keyframes, choose "
-    "Full-Body or End-Effector, then Generate.%s" % (
+hou.ui.setStatusMessage(
+    "Kimodo: created an A-pose rig%s%s. Pose and keyframe it, then add pose keys (Timeline) or Pose Keyframes." % (
         " + Rig Pose" if tip is not rig else "",
-        "" if wired else "\n\nWire it into this node's input 1.",
+        " wired to input 1" if wired else "; wire it into this node's input 1",
     ),
-    title="Kimodo",
+    severity=hou.severityType.ImportantMessage,
 )
 """
 
 _REST_SCRIPT = r"""
 import hou
 
+_err = hou.pwd().parent().parm("last_error").eval().strip()
+if _err:
+    raise hou.NodeError(_err)   # failed Generate: every output flags it, see the cook script
 _m = hou.pwd().parent().type().hdaModule()
 SOMA77_JOINTS  = _m.SOMA77_JOINTS
 SOMA77_PARENTS = _m.SOMA77_PARENTS
@@ -534,6 +545,9 @@ for i, parent in enumerate(SOMA77_PARENTS):
 # path resolution and keeps the HDA self-contained.
 _SECTION_LOADER = '''import os, base64, tempfile, hou
 node = hou.pwd()
+_err = node.parent().parm("last_error").eval().strip()
+if _err:
+    raise hou.NodeError(_err)   # failed Generate: every output flags it, see the cook script
 name = "%s"
 raw = node.parent().type().definition().sections()[name].contents()
 data = base64.b64decode(raw)
@@ -567,8 +581,8 @@ for pt in hou.ui.paneTabs():          # hou.ui.paneTabs() includes floating pane
 if tab is None:
     iface = hou.pypanel.interfaceByName("kimodo_timeline")
     if iface is None:
-        hou.ui.displayMessage("Kimodo Timeline panel not found.\nIs houdini/python_panels on your HOUDINI_PATH (fxhoudinikimodo package)?",
-                              severity=hou.severityType.Error, title="Kimodo")
+        node.parm("last_error").set("Kimodo Timeline panel not found: is houdini/python_panels on HOUDINI_PATH (fxhoudinikimodo package)?")
+        hou.ui.setStatusMessage("Kimodo: Timeline panel not found (see node error).", severity=hou.severityType.Error)
     else:
         tab = desk.createFloatingPaneTab(hou.paneTabType.PythonPanel, size=(1100, 420))
         tab.setActiveInterface(iface)
@@ -878,6 +892,8 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
 
     # Hidden plumbing.
     ptg.append(hou.StringParmTemplate("job_id", "Job ID", 1, default_value=("",), is_hidden=True))
+    # Last failure message; the cook raises it as a node error. Cleared when Generate starts.
+    ptg.append(hou.StringParmTemplate("last_error", "Last Error", 1, default_value=("",), is_hidden=True))
     ptg.append(hou.StringParmTemplate("timeline_json", "Timeline", 1, default_value=("",), is_hidden=True,
                                       tags={"editor": "1"}))
     # Mirror of "timeline_json is non-empty" for disablewhen rules (a JSON blob is not a
