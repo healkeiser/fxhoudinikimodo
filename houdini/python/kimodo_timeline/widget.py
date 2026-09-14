@@ -63,6 +63,7 @@ class Canvas(QtWidgets.QWidget):
         self._key = None                  # original key frame for key drags
         self._drop = None                 # drop index while moving a segment
         self._hover = None
+        self._ppf_locked = None           # pixels-per-frame frozen during a drag
         self.setMouseTracking(True)
         self.setMinimumHeight(RULER_H + PROMPT_H + TRACK_H * len(TRACKS) + 8)
         self.setContextMenuPolicy(QtCore.Qt.DefaultContextMenu)
@@ -72,6 +73,10 @@ class Canvas(QtWidgets.QWidget):
         return max(self.tl.total_frames, 24)
 
     def _px_per_frame(self) -> float:
+        # Frozen while dragging: a resize changes the total, and re-fitting the view under
+        # the cursor mid-drag makes the bar chase the mouse. Re-fits on release.
+        if self._ppf_locked is not None:
+            return self._ppf_locked
         return max(MIN_PX_PER_FRAME, (self.width() - GUTTER - PAD_R) / float(self._span()))
 
     def x_of(self, frame: float) -> float:
@@ -205,6 +210,7 @@ class Canvas(QtWidgets.QWidget):
             return super().mousePressEvent(ev)
         pos = ev.position()
         row, track = self._row_of(pos.y())
+        self._ppf_locked = self._px_per_frame()   # freeze the scale for this interaction
         if row == "ruler":
             self._mode = "scrub"; self.frameRequested.emit(self.frame_at(pos.x())); return
         if row == "prompt":
@@ -254,6 +260,7 @@ class Canvas(QtWidgets.QWidget):
 
     def mouseReleaseEvent(self, ev):
         mode, self._mode = self._mode, None
+        self._ppf_locked = None                  # re-fit the view to the new total
         if mode == "resize":
             self.tl.clamp_keys(self.start); self.edited.emit("Kimodo timeline: resize segment")
         elif mode == "move":
