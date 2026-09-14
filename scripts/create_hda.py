@@ -558,7 +558,7 @@ node = kwargs["node"]
 node.setSelected(True, clear_all_selected=True)
 desk = hou.ui.curDesktop()
 tab = None
-for pt in desk.paneTabs():
+for pt in hou.ui.paneTabs():          # hou.ui.paneTabs() includes floating panels; desk.paneTabs() does not
     if pt.type() == hou.paneTabType.PythonPanel:
         iface = pt.activeInterface()
         if iface is not None and iface.name() == "kimodo_timeline":
