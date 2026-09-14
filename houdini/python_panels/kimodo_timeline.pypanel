@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<pythonPanelDocument>
+  <!-- Kimodo Timeline: prompt segments and pose tracks for the vb::kimodo_motion SOP.
+       The widget code lives in houdini/python/kimodo_timeline (on PYTHONPATH via the
+       fxhoudinikimodo package). -->
+  <interface name="kimodo_timeline" label="Kimodo Timeline" icon="opdef:/vb::Sop/kimodo_motion::1.1?IconSVG" showNetworkNavigationBar="false" help_url="">
+    <script><![CDATA[
+def onCreateInterface():
+    import kimodo_timeline
+    return kimodo_timeline.create_widget()
+]]></script>
+    <includeInToolbarMenu menu_position="0" create_separator="false"/>
+  </interface>
+</pythonPanelDocument>

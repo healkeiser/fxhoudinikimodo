@@ -2,6 +2,12 @@
     "env": [
         {
             "KIMODO_BRIDGE_ROOT": "/path/to/fxhoudinikimodo"
+        },
+        {
+            "PYTHONPATH": {
+                "method": "append",
+                "value": "$KIMODO_BRIDGE_ROOT/houdini/python"
+            }
         }
     ],
     "path": "$KIMODO_BRIDGE_ROOT/houdini"
