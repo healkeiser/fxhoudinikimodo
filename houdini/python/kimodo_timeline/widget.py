@@ -427,6 +427,14 @@ class TimelineWidget(QtWidgets.QWidget):
         self.canvas.update()
         self.status_label.setText(bridge.status(self.node))
         self.detach_btn.setVisible(bridge.has_timeline(self.node))
+        # Pose keys need a posed rig on input 1; say so before Generate has to refuse.
+        has_keys = any(self.canvas.tl.tracks.get(t) for t in self.canvas.tl.tracks)
+        if has_keys and self.node.input(1) is None:
+            self.node_label.setText(f"{self.node.path()}   ⚠ pose keys need a posed skeleton on input 1 (Create Pose Rig)")
+            self.node_label.setStyleSheet("font-weight: bold; color: #e0a030")
+        else:
+            self.node_label.setText(self.node.path())
+            self.node_label.setStyleSheet("font-weight: bold")
 
     def _load(self, node):
         self.node = node
