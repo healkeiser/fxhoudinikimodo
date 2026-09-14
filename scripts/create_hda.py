@@ -101,8 +101,17 @@ def _cook():
         f = f * hda_node.parm("source_fps").eval() / hou.fps()
     frame = max(0, min(int(round(f)), T - 1))
 
-    pos  = posed[frame]
+    pos  = posed[frame].copy()
     grot = global_rots[frame]
+
+    # Undo the path canonicalisation done by Generate (see the callback): rotate about Y by
+    # the stored heading and translate back to the curve's first point.
+    ox, oz, ang = hda_node.parmTuple("path_xform").eval()
+    if ang or ox or oz:
+        c, s_ = np.cos(ang), np.sin(ang)
+        R = np.array([[c, 0.0, s_], [0.0, 1.0, 0.0], [-s_, 0.0, c]])   # rotation about +Y by ang
+        pos = pos @ R.T + np.array([ox, 0.0, oz])
+        grot = np.einsum("ij,njk->nik", R, grot)
 
     # Optional: Kimodo's per-frame foot-contact labels. Absent from NPZs that only
     # carry the two keys above, so the attribute is written only when they exist.
@@ -226,6 +235,7 @@ try:
     # otherwise the points (in order, e.g. a polyline) are spread evenly over the
     # clip as a denser path.
     ins = node.inputs()
+    node.parmTuple("path_xform").set((0.0, 0.0, 0.0))
     if ins and ins[0] is not None:
         geo = node.inputGeometry(0)
         pts = geo.points()
@@ -261,9 +271,21 @@ try:
             for f, c in zip(frames, xz):
                 by_frame.setdefault(f, c)
             items = sorted(by_frame.items())
+            pts_xz = [c for _, c in items]
+            # Canonicalise: Kimodo generates with the root at XZ (0,0) facing +Z on the first
+            # sample. A path that starts elsewhere or heads off-axis forces a lurch/turn in the
+            # first frames. Translate the first waypoint to the origin and rotate the path so its
+            # initial tangent is +Z; the cook applies the inverse so the result sits on the curve.
+            import math
+            ox, oz = pts_xz[0]
+            dx, dz = next(((x - ox, z - oz) for x, z in pts_xz[1:] if abs(x - ox) + abs(z - oz) > 1e-4), (0.0, 1.0))
+            ang = math.atan2(dx, dz)                      # heading of the path start, from +Z toward +X
+            ca, sa = math.cos(-ang), math.sin(-ang)
+            canon = [[(x - ox) * ca + (z - oz) * sa, -(x - ox) * sa + (z - oz) * ca] for x, z in pts_xz]
+            node.parmTuple("path_xform").set((ox, oz, ang))
             root2d = {"type": "root2d",
                       "frame_indices": [f for f, _ in items],
-                      "smooth_root_2d": [c for _, c in items]}
+                      "smooth_root_2d": canon}
             constraints = (constraints or []) + [root2d]
 
     # Optional posed-skeleton input (input 1) -> a full-body / end-effector constraint.
@@ -935,6 +957,9 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
     ptg.append(hou.StringParmTemplate("last_error", "Last Error", 1, default_value=("",), is_hidden=True))
     # 0..1 while a job runs (server-reported denoising progress); the Timeline panel draws it.
     ptg.append(hou.FloatParmTemplate("progress", "Progress", 1, default_value=(0.0,), min=0.0, max=1.0, is_hidden=True))
+    # Root path canonicalisation written by Generate: (origin x, origin z, heading angle). The
+    # cook applies the inverse so the generated motion lands on the authored curve.
+    ptg.append(hou.FloatParmTemplate("path_xform", "Path Transform", 3, default_value=(0.0, 0.0, 0.0), is_hidden=True))
     ptg.append(hou.StringParmTemplate("timeline_json", "Timeline", 1, default_value=("",), is_hidden=True,
                                       tags={"editor": "1"}))
     # Mirror of "timeline_json is non-empty" for disablewhen rules (a JSON blob is not a

@@ -194,6 +194,11 @@ Start Frame and Retime); otherwise the curve is thinned to **Path Waypoints** po
 length (default 8) and those are spread evenly across the clip. The geometry-derived
 `root2d` is appended to any JSON constraints above.
 
+> The node canonicalises the path before sending it: Kimodo generates with the root at XZ
+> (0,0) facing +Z on the first sample, so a curve that starts elsewhere or heads off-axis
+> would force a lurch and a turn in the first frames. The path is translated and rotated
+> into that frame, and the animated output is transformed back so it lands on your curve.
+>
 > A root path is a hard promise about where the pelvis is at each waypoint. A dense path
 > (Path Waypoints = 0, or a resampled curve with many points) pins the root to a constant
 > speed for the whole clip, which fights any segment that should slow down, stop, sit or
