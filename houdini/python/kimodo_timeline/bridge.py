@@ -75,6 +75,14 @@ def status(node) -> str:
     return node.parm("status").eval()
 
 
+def progress(node) -> float | None:
+    """0..1 while a job is queued/running/downloading, else None."""
+    st = node.parm("status").eval()
+    if st.startswith(("Queued", "Running", "Downloading")):
+        return float(node.parm("progress").eval())
+    return None
+
+
 def generate(node) -> None:
     node.parm("generate").pressButton()
 

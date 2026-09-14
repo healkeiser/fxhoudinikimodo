@@ -445,6 +445,9 @@ class TimelineWidget(QtWidgets.QWidget):
         self.fit_btn.clicked.connect(self.canvas.fit)
         foot.addWidget(self.fit_btn)
         foot.addSpacing(12)
+        self.progress = QtWidgets.QProgressBar(); self.progress.setRange(0, 1000); self.progress.setTextVisible(True)
+        self.progress.setFixedWidth(160); self.progress.setFormat("%p%"); self.progress.hide()
+        foot.addWidget(self.progress)
         self.status_label = QtWidgets.QLabel("")
         self.status_label.setStyleSheet("color: #9a9a9a")
         foot.addWidget(self.status_label)
@@ -488,6 +491,10 @@ class TimelineWidget(QtWidgets.QWidget):
         self.canvas.start = bridge.start_frame(self.node)
         self.canvas.update()
         self.status_label.setText(bridge.status(self.node))
+        prog = bridge.progress(self.node)
+        self.progress.setVisible(prog is not None)
+        if prog is not None:
+            self.progress.setValue(int(prog * 1000))
         self.detach_btn.setVisible(bridge.has_timeline(self.node))
         # Pose keys need a posed rig on input 1; say so before Generate has to refuse.
         has_keys = any(self.canvas.tl.tracks.get(t) for t in self.canvas.tl.tracks)

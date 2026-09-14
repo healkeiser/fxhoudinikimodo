@@ -59,7 +59,7 @@ in the network editor.
 | Model | `Kimodo-SOMA-RP-v1.1` | Kimodo checkpoint. `RP` conditions on a rest pose; `SEED` uses a fixed seed for reproducibility. |
 | **Generate** / **Cancel** | — | Submit the prompt and return at once; a background thread polls, downloads the NPZ and recooks the node. Cancel stops a queued job or discards the result. |
 | Force Regenerate | `off` | Bypass the server cache (keyed on prompt + duration + model + constraints). |
-| Status | _(read-only)_ | `Queued`, `Running... (Ns)`, `Downloading...`, `Done (Ns)`, `Done (cached)`, `Failed`, `Cancelled`, or the Test Connection result. |
+| Status | _(read-only)_ | `Queued`, `Running 42% (Ns)`, `Downloading...`, `Done (Ns)`, `Done (cached)`, `Error: …`, `Cancelled`, or the Test Connection result. The percentage is the server's denoising progress across segments, with the phase (`encoding text`, `denoising segment k/N`, `post-processing`); the Timeline panel draws it as a bar. Text encoding runs on the CPU and takes ~30 s per segment before any denoising happens, so expect the bar to sit at 0% for a while on the first segment. Failures also mark the node with an error. |
 | Clip | _(read-only)_ | Length of the last clip in seconds, scene frames and Kimodo samples. |
 
 **Constraints** (two collapsible groups; see [Constraints](#constraints-optional))

@@ -343,6 +343,7 @@ except Exception as e:
 else:
     job_id = resp.json()["job_id"]
     node.parm("job_id").set(job_id)
+    node.parm("progress").set(0.0)
     node.parm("status").set(f"Queued ({job_id[:8]}...)")
     if hou.isUIAvailable():
         hou.ui.setStatusMessage("Kimodo: generation started, watch the node's Status field.",
@@ -403,6 +404,7 @@ else:
                     fps = node.parm("source_fps").eval() or 30
                     secs = frames / fps
                     node.parm("status").set(done_label)
+                    node.parm("progress").set(1.0)
                     node.parm("clip_info").set(
                         f"{secs:.2f} s = {round(secs * hou.fps())} frames @ {hou.fps():g} fps "
                         f"({frames} samples @ {fps} fps)")
@@ -419,7 +421,12 @@ else:
                 _set("status", "Cancelled")
                 break
             else:
-                _set("status", f"Running...{elapsed_str}")
+                prog, phase = data.get("progress"), data.get("phase")
+                if prog is not None:
+                    _set("progress", float(prog))
+                    _set("status", f"Running {int(prog * 100):d}%" + (f" · {phase}" if phase else "") + elapsed_str)
+                else:
+                    _set("status", f"Running...{elapsed_str}")
 
     threading.Thread(target=_poll, daemon=True).start()
 """
@@ -894,6 +901,8 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
     ptg.append(hou.StringParmTemplate("job_id", "Job ID", 1, default_value=("",), is_hidden=True))
     # Last failure message; the cook raises it as a node error. Cleared when Generate starts.
     ptg.append(hou.StringParmTemplate("last_error", "Last Error", 1, default_value=("",), is_hidden=True))
+    # 0..1 while a job runs (server-reported denoising progress); the Timeline panel draws it.
+    ptg.append(hou.FloatParmTemplate("progress", "Progress", 1, default_value=(0.0,), min=0.0, max=1.0, is_hidden=True))
     ptg.append(hou.StringParmTemplate("timeline_json", "Timeline", 1, default_value=("",), is_hidden=True,
                                       tags={"editor": "1"}))
     # Mirror of "timeline_json is non-empty" for disablewhen rules (a JSON blob is not a
