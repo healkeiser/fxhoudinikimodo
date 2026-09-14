@@ -202,7 +202,10 @@ length (default 8) and those are spread evenly across the clip. The geometry-der
 > A root path is a hard promise about where the pelvis is at each waypoint. A dense path
 > (Path Waypoints = 0, or a resampled curve with many points) pins the root to a constant
 > speed for the whole clip, which fights any segment that should slow down, stop, sit or
-> fall: the character slides along the curve while doing it. Keep waypoints sparse, and for
+> fall: the character slides along the curve while doing it. Even over a pure walk, a
+> waypoint every frame or two flattens the natural step rhythm (root speed variation and
+> vertical bob drop by two thirds) and the body glides; 6 to 10 anchors over a walk keep the
+> route and give the stride back. Keep waypoints sparse, and for
 > a timeline with stationary segments give the curve points a `frame` attribute that covers
 > only the travelling segment. Check the implied speed too: 5 m over 8 s is 0.6 m/s, a
 > slow walk; ask for a run over that distance and the feet will skate.

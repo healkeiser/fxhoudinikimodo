@@ -241,27 +241,34 @@ try:
         pts = geo.points()
         if pts:
             xz = [[float(p.position()[0]), float(p.position()[2])] for p in pts]
+            # Thin a dense path to Path Waypoints points by arc length (keeping first and
+            # last). A waypoint every frame or two pins the pelvis to a perfectly smooth
+            # constant-speed glide and the body floats along the curve; a handful of anchors
+            # lets the model put its own stride rhythm back between them.
+            def thin(points, nwp):
+                if nwp < 2 or len(points) <= nwp:
+                    return list(range(len(points)))
+                import math
+                cum = [0.0]
+                for a_, b_ in zip(points, points[1:]):
+                    cum.append(cum[-1] + math.hypot(b_[0] - a_[0], b_[1] - a_[1]))
+                total_len = cum[-1] or 1.0
+                keep, j = [], 0
+                for k in range(nwp):
+                    target = total_len * k / (nwp - 1)
+                    while j < len(cum) - 1 and cum[j + 1] < target:
+                        j += 1
+                    keep.append(j if k < nwp - 1 else len(points) - 1)
+                return sorted(set(keep))
+            nwp = int(node.parm("path_waypoints").eval())
             if geo.findPointAttrib("frame") is not None:
-                # Sparse waypoints: the artist chose the timing (scene frames -> clip samples).
-                frames = [to_sample(int(p.attribValue("frame"))) for p in pts]
+                # Artist-timed waypoints (scene frames -> clip samples), thinned the same way.
+                idx = thin(xz, nwp)
+                frames = [to_sample(int(pts[i].attribValue("frame"))) for i in idx]
+                xz = [xz[i] for i in idx]
             elif len(pts) > 1:
-                # Dense path: thin it to Path Waypoints points by arc length, then spread them
-                # evenly over the clip. Every point at constant speed would pin the root to a
-                # steady velocity through segments that should slow down, stop or fall.
-                nwp = int(node.parm("path_waypoints").eval())
-                if nwp >= 2 and len(xz) > nwp:
-                    import math
-                    cum = [0.0]
-                    for a_, b_ in zip(xz, xz[1:]):
-                        cum.append(cum[-1] + math.hypot(b_[0] - a_[0], b_[1] - a_[1]))
-                    total_len = cum[-1] or 1.0
-                    picked, j = [], 0
-                    for k in range(nwp):
-                        target = total_len * k / (nwp - 1)
-                        while j < len(cum) - 1 and cum[j + 1] < target:
-                            j += 1
-                        picked.append(xz[j] if k < nwp - 1 else xz[-1])
-                    xz = picked
+                idx = thin(xz, nwp)
+                xz = [xz[i] for i in idx]
                 T = max(2, int(duration_s * source_fps))   # clip samples, not scene frames
                 frames = [int(round(i * (T - 1) / (len(xz) - 1))) for i in range(len(xz))]
             else:
@@ -827,9 +834,10 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
              "thinned to this many points by arc length and spread evenly over the clip, so the "
              "model keeps room to slow down or stop between them. <code>0</code> = use every "
              "point (constant speed along the whole clip, which fights segments that should "
-             "stand still or fall).<br>Points with an <code>int frame</code> attribute are "
-             "sparse waypoints at those scene frames: use them to constrain only the part of "
-             "the clip that should travel.",
+             "stand still or fall, and a pelvis that glides instead of stepping).<br>Points "
+             "with an <code>int frame</code> attribute are waypoints at those scene frames, "
+             "thinned the same way: use them to constrain only the part of the clip that "
+             "should travel.",
     ))
     con.addParmTemplate(path)
     js = hou.FolderParmTemplate("grp_json", "Constraints JSON", folder_type=hou.folderType.Collapsible,
