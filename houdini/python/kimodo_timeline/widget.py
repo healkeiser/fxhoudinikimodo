@@ -582,8 +582,18 @@ class TimelineWidget(QtWidgets.QWidget):
         self.canvas.setToolTip("Wheel: zoom \u00b7 Middle-drag: pan \u00b7 F: fit \u00b7 Drag block edge: resize \u00b7 Drag block: reorder \u00b7 "
                                "Double-click: edit prompt + length \u00b7 Right-click: add / split / delete")
         self.canvas.edited.connect(self._write)
-        self.canvas.frameRequested.connect(bridge.set_frame)
-        self.canvas.regenRequested.connect(self._regen)
+        # Queued, not direct. Run synchronously, both of these re-enter Houdini from
+        # inside a Qt event handler: set_frame calls hou.ui.triggerUpdate from
+        # Canvas.mouseMoveEvent on every scrub step, and _regen opens a modal progress
+        # dialog while the context menu's own exec() loop is still on the stack.
+        # Re-entering Houdini's UI cycle mid-dispatch leaves it routing mouse input to
+        # whichever pane was active at re-entry, so every pane except this one stops
+        # answering the mouse until something forces a pane focus change. A queued
+        # connection runs the slot from the event loop once the handler has returned.
+        # Scrubbing still reads as immediate because _scrub_to moves the canvas's own
+        # playhead before it emits.
+        self.canvas.frameRequested.connect(bridge.set_frame, QtCore.Qt.QueuedConnection)
+        self.canvas.regenRequested.connect(self._regen, QtCore.Qt.QueuedConnection)
         lay.addWidget(self.canvas, 1)
 
         foot = QtWidgets.QHBoxLayout()
