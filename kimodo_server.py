@@ -142,18 +142,23 @@ class _Progress:
 
     def __init__(self, job: dict, expected_loops: int):
         self.job, self.expected, self.done_loops = job, max(1, expected_loops), 0
-        self.job["phase"] = "encoding text"
+        self.job["expected_loops"] = self.expected
+        self._set_phase("encoding text")
+
+    def _set_phase(self, phase: str) -> None:
+        self.job["phase"] = phase
+        self.job["phase_started"] = _time.monotonic()
 
     def __call__(self, iterable, **_):
         items = list(iterable)
         n = max(1, len(items))
-        self.job["phase"] = f"denoising segment {self.done_loops + 1}/{self.expected}"
+        self._set_phase(f"denoising segment {self.done_loops + 1}/{self.expected}")
         for i, it in enumerate(items):
             self.job["progress"] = min(0.99, (self.done_loops + i / n) / self.expected)
             yield it
         self.done_loops += 1
         self.job["progress"] = min(0.99, self.done_loops / self.expected)
-        self.job["phase"] = "post-processing" if self.done_loops >= self.expected else "encoding text"
+        self._set_phase("post-processing" if self.done_loops >= self.expected else "encoding text")
 
 
 def _infer_resident(req: "GenerateRequest", out_path: pathlib.Path, job: Optional[dict] = None) -> None:
@@ -310,6 +315,22 @@ async def generate(req: GenerateRequest) -> JobStatus:
     return JobStatus(job_id=job_id, status="queued", prompt=desc)
 
 
+# Only the denoising loop reports progress, and it is the short part of a segment:
+# roughly 30 s of text encoding on CPU against ~8 s of denoising on GPU. Without this
+# the bar jumps a whole segment then sits still. The creep is an estimate from elapsed
+# time, capped short of the next real milestone so it never overtakes the truth.
+_ENCODE_EST_S = 30.0
+
+
+def _display_progress(job: dict) -> Optional[float]:
+    prog, phase = job.get("progress"), job.get("phase")
+    if prog is None or not phase or phase.startswith("denoising"):
+        return prog
+    span = 1.0 / max(1, int(job.get("expected_loops", 1)))
+    waited = _time.monotonic() - job.get("phase_started", _time.monotonic())
+    return min(0.99, prog + span * 0.9 * min(1.0, waited / _ENCODE_EST_S))
+
+
 @app.get("/jobs/{job_id}")
 def job_status(job_id: str) -> JobStatus:
     if job_id not in _jobs:
@@ -328,7 +349,7 @@ def job_status(job_id: str) -> JobStatus:
         error=job.get("error"),
         elapsed=round(elapsed, 1) if elapsed is not None else None,
         cached=job.get("cached"),
-        progress=job.get("progress"),
+        progress=_display_progress(job),
         phase=job.get("phase"),
     )
 

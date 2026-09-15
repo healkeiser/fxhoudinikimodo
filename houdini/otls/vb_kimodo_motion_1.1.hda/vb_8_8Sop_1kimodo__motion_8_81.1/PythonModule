@@ -213,7 +213,7 @@ def rebuild_segments(node):
 
 
 def refresh_starts(node):
-    """Fill each instance's read-only first/last scene frame."""
+    """Fill each instance's read-only first and last scene frame."""
     segs = read_timeline(node).get("segments") or []
     f = int(node.parm("start_frame").eval())
     for i, sg in enumerate(segs, start=1):
@@ -226,6 +226,31 @@ def refresh_starts(node):
         if b.eval() != last:
             b.set(last)
         f = last + 1
+
+
+def run_regenerate(node, index, to_end=False):
+    """Shared body for the two Regenerate buttons."""
+    import hou
+    try:
+        from kimodo_timeline import regen
+    except ImportError:
+        node.parm("last_error").set(
+            "Regenerate needs houdini/python on PYTHONPATH (the fxhoudinikimodo package).")
+        raise
+    try:
+        msg = regen.regenerate(node, index, to_end=to_end)
+    except hou.OperationInterrupted:
+        node.parm("status").set("Cancelled")
+    except Exception as e:
+        node.parm("last_error").set(str(e))
+        node.parm("status").set("Error: %s" % e)
+        if hou.isUIAvailable():
+            hou.ui.setStatusMessage("Kimodo: %s" % e, severity=hou.severityType.Error)
+    else:
+        node.parm("last_error").set("")
+        if hou.isUIAvailable():
+            hou.ui.setStatusMessage("Kimodo: %s" % msg,
+                                    severity=hou.severityType.ImportantMessage)
 
 
 def sync_from_parms(node):

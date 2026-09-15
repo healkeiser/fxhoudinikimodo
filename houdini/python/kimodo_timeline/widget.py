@@ -104,6 +104,7 @@ class Canvas(QtWidgets.QWidget):
     should be written to the node, `frameRequested` when the ruler is scrubbed."""
     edited = QtCore.Signal(str)          # undo label
     frameRequested = QtCore.Signal(int)
+    regenRequested = QtCore.Signal(int, bool)   # segment index, and whether to run to the end
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -465,6 +466,16 @@ class Canvas(QtWidgets.QWidget):
                 menu.addAction("Add segment after", lambda: self.add_segment(after=i))
                 menu.addAction("Split at playhead", lambda: self.split_at(i, self.playhead))
                 menu.addSeparator()
+                one = menu.addAction("Regenerate this sequence…",
+                                     lambda: self.regenRequested.emit(i, False))
+                rest = menu.addAction("Regenerate from here to the end…",
+                                      lambda: self.regenRequested.emit(i, True))
+                for act in (one, rest):
+                    act.setEnabled(i > 0)
+                    if i == 0:
+                        act.setToolTip("The first sequence has no earlier motion to "
+                                       "continue from; use Generate.")
+                menu.addSeparator()
                 menu.addAction("Delete segment", lambda: self.remove_segment(i))
             else:
                 menu.addAction("Add segment at end", lambda: self.add_segment())
@@ -564,6 +575,7 @@ class TimelineWidget(QtWidgets.QWidget):
                                "Double-click: edit prompt + length \u00b7 Right-click: add / split / delete")
         self.canvas.edited.connect(self._write)
         self.canvas.frameRequested.connect(bridge.set_frame)
+        self.canvas.regenRequested.connect(self._regen)
         lay.addWidget(self.canvas, 1)
 
         foot = QtWidgets.QHBoxLayout()
@@ -733,6 +745,28 @@ class TimelineWidget(QtWidgets.QWidget):
     def _transition_changed(self, v):
         self.canvas.tl.transition_frames = int(v); self._write("Kimodo timeline: transition")
         self.canvas.update()
+
+    def _regen(self, index, to_end=False):
+        """Re-roll a sequence, keeping what came before and, unless `to_end`, what comes
+        after. Imported lazily: it needs numpy, and the rest of the panel does not."""
+        if self.node is None:
+            return
+        self._write("Kimodo timeline: regenerate")
+        try:
+            from . import regen
+        except ImportError as e:
+            self.status_label.setText("regen unavailable: %s" % e)
+            return
+        try:
+            msg = regen.regenerate(self.node, index, to_end=to_end)
+        except hou.OperationInterrupted:
+            self.status_label.setText("Cancelled")
+        except Exception as e:
+            self.status_label.setText(str(e))
+            if hou.isUIAvailable():
+                hou.ui.setStatusMessage("Kimodo: %s" % e, severity=hou.severityType.Error)
+        else:
+            self.status_label.setText(msg)
 
     def _generate(self):
         if self.node is None:

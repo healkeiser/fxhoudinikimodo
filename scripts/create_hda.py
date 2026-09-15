@@ -112,7 +112,7 @@ def rebuild_segments(node):
 
 
 def refresh_starts(node):
-    """Fill each instance's read-only first/last scene frame."""
+    """Fill each instance's read-only first and last scene frame."""
     segs = read_timeline(node).get("segments") or []
     f = int(node.parm("start_frame").eval())
     for i, sg in enumerate(segs, start=1):
@@ -125,6 +125,31 @@ def refresh_starts(node):
         if b.eval() != last:
             b.set(last)
         f = last + 1
+
+
+def run_regenerate(node, index, to_end=False):
+    """Shared body for the two Regenerate buttons."""
+    import hou
+    try:
+        from kimodo_timeline import regen
+    except ImportError:
+        node.parm("last_error").set(
+            "Regenerate needs houdini/python on PYTHONPATH (the fxhoudinikimodo package).")
+        raise
+    try:
+        msg = regen.regenerate(node, index, to_end=to_end)
+    except hou.OperationInterrupted:
+        node.parm("status").set("Cancelled")
+    except Exception as e:
+        node.parm("last_error").set(str(e))
+        node.parm("status").set("Error: %s" % e)
+        if hou.isUIAvailable():
+            hou.ui.setStatusMessage("Kimodo: %s" % e, severity=hou.severityType.Error)
+    else:
+        node.parm("last_error").set("")
+        if hou.isUIAvailable():
+            hou.ui.setStatusMessage("Kimodo: %s" % msg,
+                                    severity=hou.severityType.ImportantMessage)
 
 
 def sync_from_parms(node):
@@ -539,7 +564,6 @@ else:
                 if op is not None:
                     last_prog = 1.0
                     op.updateProgress(1.0)
-                    op.updateLongProgress(percentage=1.0, long_op_status="Downloading")
                 try:
                     _set("status", f"Downloading...{elapsed_str}")
                     os.makedirs(download_dir, exist_ok=True)
@@ -582,18 +606,17 @@ else:
                     _set("status", label)
                     if op is not None:
                         op.updateProgress(last_prog)
-                        op.updateLongProgress(percentage=last_prog, long_op_status=label)
                 else:
                     label = f"Running...{elapsed_str}"
                     _set("status", label)
                     if op is not None:
-                        op.updateLongProgress(long_op_status=label)
+                        op.updateProgress(last_prog)
 
     if bool(node.parm("wait_for_result").eval()) and hou.isUIAvailable():
         # Blocking mode: the same loop, on the main thread, behind Houdini's standard
         # progress dialog. Cancel maps onto the server's own cancel endpoint.
         try:
-            with hou.InterruptableOperation("Kimodo", "Generating motion",
+            with hou.InterruptableOperation("Generating motion",
                                             open_interrupt_dialog=True) as op:
                 _poll(op)
         except hou.OperationInterrupted:
@@ -810,42 +833,29 @@ if 0 <= i < len(segs):
 
 
 _SEG_REGEN_CB = r"""
-import hou
 node = kwargs["node"]
-i = int(kwargs["script_multiparm_index"]) - 1
-try:
-    from kimodo_timeline import regen
-except ImportError:
-    node.parm("last_error").set(
-        "Regenerate needs houdini/python on PYTHONPATH (the fxhoudinikimodo package).")
-    raise
-try:
-    msg = regen.regenerate_from(node, i)
-except hou.OperationInterrupted:
-    node.parm("status").set("Cancelled")
-except Exception as e:
-    node.parm("last_error").set(str(e))
-    node.parm("status").set("Error: %s" % e)
-    if hou.isUIAvailable():
-        hou.ui.setStatusMessage("Kimodo: %s" % e, severity=hou.severityType.Error)
-else:
-    node.parm("last_error").set("")
-    node.parm("status").set(msg)
-    if hou.isUIAvailable():
-        hou.ui.setStatusMessage("Kimodo: %s" % msg,
-                                severity=hou.severityType.ImportantMessage)
+node.type().hdaModule().run_regenerate(node, int(kwargs["script_multiparm_index"]) - 1, False)
 """
+
+
+_SEG_REGEN_END_CB = r"""
+node = kwargs["node"]
+node.type().hdaModule().run_regenerate(node, int(kwargs["script_multiparm_index"]) - 1, True)
+"""
+
 
 
 _ON_CREATED = r"""
 node = kwargs["node"]
 node.setUserData("nodeshape", "bulge")
-# Start with a single sequence: Sequences is the only place a prompt lives, so a fresh
-# node must not come up empty.
-if node.parm("segments").eval() == 0:
-    node.parm("segments").set(1)
-    node.parm("seg_prompt1").set(node.parm("prompt").eval())
-    node.parm("seg_frames1").set(int(node.parm("duration_frames").eval()))
+# Seed the first sequence from the defaults. Keyed on the timeline being empty, not on
+# the instance count: the multiparm defaults to 1, so a count test never fires.
+if not node.parm("timeline_json").eval().strip():
+    if node.parm("segments").eval() < 1:
+        node.parm("segments").set(1)
+    if not node.parm("seg_prompt1").eval():
+        node.parm("seg_prompt1").set(node.parm("prompt").eval())
+        node.parm("seg_frames1").set(int(node.parm("duration_frames").eval()))
     node.type().hdaModule().sync_from_parms(node)
 """
 
@@ -1015,13 +1025,13 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
     ))
     gen.addParmTemplate(hou.ToggleParmTemplate(
         "force", "Force Regenerate",
-        default_value=False, join_with_next=True,
+        default_value=True, join_with_next=True,
         help="Bypass the server cache and run inference again even if an identical "
              "_prompt + duration + model + constraints_ was generated before.",
     ))
     gen.addParmTemplate(hou.ToggleParmTemplate(
         "wait_for_result", "Wait for Result",
-        default_value=False,
+        default_value=True,
         help="Block Houdini behind the standard progress dialog until the clip arrives, the way a "
              "__File Cache__ does. __Cancel__ in that dialog cancels the job on the server.\n"
              "Off (the default): the job runs in the background and you keep working; progress "
@@ -1030,7 +1040,6 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
     seg = hou.FolderParmTemplate("segments", "Sequences",
                                  folder_type=hou.folderType.ScrollingMultiparmBlock)
     seg.setDefaultValue(1)          # a node always has at least one sequence
-    seg.setConditional(hou.parmCondType.HideWhen, no_timeline)
     seg.addParmTemplate(hou.StringParmTemplate(
         "seg_prompt#", "Prompt", 1, default_value=("",),
         script_callback=_SEG_SYNC_CB, script_callback_language=hou.scriptLanguage.Python,
@@ -1048,7 +1057,9 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
     seg.addParmTemplate(hou.LabelParmTemplate(
         "seg_range#", "Frames", join_with_next=True,
         # same sixteen-column trick as Status: one wide column would centre the text
-        column_labels=('`chs("seg_from#")` - `chs("seg_to#")`',) + ("",) * 15,
+        column_labels=('`chs("seg_from#")` - `chs("seg_to#")`   '
+                       '(`rint(ch("seg_frames#") / ch("scene_fps") * 100) / 100` s)',)
+                      + ("",) * 15,
         help="Scene frames this sequence occupies, counted from __Start Frame__. "
              "Read-only: it follows the lengths above it.",
     ))
@@ -1064,14 +1075,19 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
         help="Cut this sequence in two at the playhead, keeping the prompt on both halves.",
     ))
     seg.addParmTemplate(hou.ButtonParmTemplate(
-        "seg_regen#", "Regenerate From Here", script_callback=_SEG_REGEN_CB,
-        script_callback_language=hou.scriptLanguage.Python,
+        "seg_regen#", "Regenerate", script_callback=_SEG_REGEN_CB,
+        script_callback_language=hou.scriptLanguage.Python, join_with_next=True,
         help="Re-roll this sequence and every sequence after it, keeping everything before it.\n"
              "The motion already generated for the previous sequence is sent back as the seam, "
              "so the join is continuous; measured at well under a millimetre against about "
              "1.5 cm of ordinary motion per sample.\n"
              "Much cheaper than Generate, which re-runs the whole clip. Blocks until done.\n"
              "Not available on the first sequence, which has no earlier motion to continue from.",
+    ))
+    seg.addParmTemplate(hou.ButtonParmTemplate(
+        "seg_regen_end#", "From Here", script_callback=_SEG_REGEN_END_CB,
+        script_callback_language=hou.scriptLanguage.Python,
+        help="Re-roll this sequence and every sequence after it, keeping everything before it. Use this when the change should carry through the rest of the clip; use __Regenerate__ when only this sequence is wrong.",
     ))
     gen.addParmTemplate(seg)
     gen.addParmTemplate(hou.StringParmTemplate(
@@ -1204,6 +1220,14 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
     # Tab: Output - timing and the clip file.
     out = hou.FolderParmTemplate("fld_output", "Output", folder_type=hou.folderType.Tabs)
     out.addParmTemplate(hou.IntParmTemplate(
+        "scene_fps", "Scene FPS", 1,
+        default_expression=("$FPS",),
+        default_expression_language=(hou.scriptLanguage.Hscript,),
+        is_hidden=True,
+        help="The scene FPS, as an expression, so the sequence lengths in seconds follow "
+             "it without anything having to refresh them.",
+    ))
+    gen.addParmTemplate(hou.FloatParmTemplate(
         "start_frame", "Start Frame", 1,
         script_callback="hou.pwd().type().hdaModule().refresh_starts(hou.pwd())",
         script_callback_language=hou.scriptLanguage.Python,

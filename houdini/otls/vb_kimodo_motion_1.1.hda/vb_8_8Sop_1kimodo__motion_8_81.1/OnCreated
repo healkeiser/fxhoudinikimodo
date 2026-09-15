@@ -1,10 +1,12 @@
 
 node = kwargs["node"]
 node.setUserData("nodeshape", "bulge")
-# Start with a single sequence: Sequences is the only place a prompt lives, so a fresh
-# node must not come up empty.
-if node.parm("segments").eval() == 0:
-    node.parm("segments").set(1)
-    node.parm("seg_prompt1").set(node.parm("prompt").eval())
-    node.parm("seg_frames1").set(int(node.parm("duration_frames").eval()))
+# Seed the first sequence from the defaults. Keyed on the timeline being empty, not on
+# the instance count: the multiparm defaults to 1, so a count test never fires.
+if not node.parm("timeline_json").eval().strip():
+    if node.parm("segments").eval() < 1:
+        node.parm("segments").set(1)
+    if not node.parm("seg_prompt1").eval():
+        node.parm("seg_prompt1").set(node.parm("prompt").eval())
+        node.parm("seg_frames1").set(int(node.parm("duration_frames").eval()))
     node.type().hdaModule().sync_from_parms(node)

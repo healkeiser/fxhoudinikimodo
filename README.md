@@ -40,6 +40,7 @@
 - [Installation](#installation)
 - [Usage](#usage)
 - [Writing Prompts](#writing-prompts)
+- [Regenerating Part of a Clip](#regenerating-part-of-a-clip)
 - [Environment Variables](#environment-variables)
 - [Development](#development)
 - [Credits](#credits)
@@ -220,11 +221,39 @@ Kimodo is unseeded, so every generation is a different take and the run-to-run s
 
 Nothing changed but the take. A good prompt raises the average, it does not guarantee the result.
 
-So for anything you have to show or ship: **generate, measure the sequence you care about, and regenerate if it came up weak.** Do not generate once and assume it holds. `force` bypasses the cache to get a fresh take of an identical request. Note the cache key covers the whole request, so re-rolling one sequence of a timeline re-runs every frame of it.
+So for anything you have to show or ship: **generate, measure the sequence you care about, and regenerate if it came up weak.** Do not generate once and assume it holds. `force` bypasses the cache to get a fresh take of an identical request, and you can re-roll a single sequence rather than the whole clip: see [Regenerating part of a clip](#regenerating-part-of-a-clip).
 
 ### Do not prompt for hand or finger detail
 
 Kimodo predicts on the 30-joint `somaskel30`, which strips most finger and hand detail, and converts to the 77-joint skeleton on output. Finger joints in the result are reconstructed, never predicted: `LeftHandIndex2` relative to `LeftHand` measured 0.09882 at frame 1 and 0.09883 at frame 100. Prompts about gestures, grips or finger poses cost generation time and change nothing. When retargeting, set **Blend Fingers** to 0 on Biped Retarget for the same reason.
+
+<!-- PARTIAL REGENERATION -->
+## Regenerating Part of a Clip
+
+One weak sequence does not mean regenerating the whole clip. Each sequence in the __Sequences__ multiparm has two buttons, and the timeline panel offers the same pair on right-click:
+
+__Regenerate__ re-rolls that sequence alone. The clip keeps its exact length and every frame either side is untouched, so it is a drop-in replacement for one take.
+
+__From Here__ re-rolls that sequence and every sequence after it, for when the change should carry through the rest of the clip.
+
+Measured on a 601-sample clip, re-rolling one sequence took about 60 s against roughly 8 minutes for a full generation, and left joins of 7.69 cm and 3.77 cm against the clip's own 9.67 cm of movement per sample. Both are below 1.0x, so neither reads as a cut. The node's __Status__ reports the measured join every time, so you can judge a result rather than assume it.
+
+### How it works, and why a constraint is not enough
+
+Kimodo builds a multi-prompt clip one sequence at a time, each joined to the previous one by a transition: the previous tail is prepended as observed motion, moved to the origin, generated against, then moved back and alpha-blended. A fresh `/generate` starts with that history empty, so its first sequence takes the "first motion" path and no transition runs.
+
+Handing the previous tail over as an ordinary world-space constraint does not substitute for it. Measured, the constrained frames came back accurate to 0.04 cm but the motion after them continued **184 cm** away, because generation happens in the transition's local frame and a world-space constraint fights it.
+
+So the server takes a `continue_from` tail and seeds that history instead, which needs the `initial_motion` parameter added to `_multiprompt` in `kimodo/model/kimodo_model.py`. That parameter is purely additive: without it the model behaves exactly as before.
+
+Holding the *end* is a separate problem, because whatever follows was generated against the old tail. A `fullbody-global` plus `ee-global` constraint on the new sequence's last frames fixes it, and it works here where the same constraint failed above, because with the transition running user constraints are concatenated into the same observed-motion block and translated with it. Unpinned, that join measured 335 cm; pinned, 3.77 cm.
+
+### Requirements and limits
+
+- Needs the patched `kimodo_model.py` alongside `kimodo_server.py`. Without it the server returns 422 and the node says so.
+- The timeline must still describe the clip on disk. Edit a sequence length and the node refuses until you press __Generate__, because the cut would otherwise land in the wrong place.
+- The first sequence has no earlier motion to continue from, so both buttons are disabled on it.
+- Join quality depends on how dynamic the motion is where it joins: 0.21x joining into a settle, 1.83x joining straight after a jump.
 
 <!-- ENVIRONMENT VARIABLES -->
 ## Environment Variables
