@@ -24,6 +24,8 @@ The pure functions take plain data so they can be tested without Houdini.
 from __future__ import annotations
 
 import io
+import time
+
 import numpy as np
 
 # every per-sample array in a Kimodo NPZ, concatenated on axis 0
@@ -120,6 +122,24 @@ def load_npz_bytes(blob: bytes) -> dict:
 # -- Houdini side -------------------------------------------------------------
 # Below the pure functions so the module still imports without hou.
 
+def wait_reporting(op, seconds: float, progress: float, slice_s: float = 0.05) -> None:
+    """Sleep in slices, reporting progress the whole way.
+
+    One long sleep blocks the main thread, so Houdini never gets the event-loop time it
+    needs to raise and paint its interrupt dialog, and anything finishing inside a few
+    seconds shows no progress bar at all. A File Cache shows one immediately because it
+    reports continuously while it cooks. Slicing also keeps Cancel responsive, since
+    updateProgress is what services it.
+    """
+    end = time.monotonic() + seconds
+    while True:
+        op.updateProgress(progress)          # raises hou.OperationInterrupted on Cancel
+        left = end - time.monotonic()
+        if left <= 0:
+            return
+        time.sleep(min(slice_s, left))
+
+
 def regenerate(node, seg_index: int, to_end: bool = False, poll: float = 2.0):
     """Re-roll sequence `seg_index` (0-based), in place.
 
@@ -137,7 +157,6 @@ def regenerate(node, seg_index: int, to_end: bool = False, poll: float = 2.0):
     summary for the node's Status.
     """
     import os
-    import time
 
     import hou
     import requests
@@ -207,8 +226,7 @@ def regenerate(node, seg_index: int, to_end: bool = False, poll: float = 2.0):
     with hou.InterruptableOperation("Regenerating " + what, open_interrupt_dialog=True) as op:
         last = 0.0
         while True:
-            time.sleep(poll)
-            op.updateProgress(last)
+            wait_reporting(op, poll, last)
             d = requests.get("%s/jobs/%s" % (url, job), timeout=15).json()
             if d["status"] == "done":
                 break

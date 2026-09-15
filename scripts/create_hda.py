@@ -556,10 +556,20 @@ else:
         last_prog = 0.0
         fails = 0
         while True:
-            time.sleep(interval)
-            # also services the dialog's Cancel button; raises hou.OperationInterrupted
-            if op is not None:
-                op.updateProgress(last_prog)
+            if op is None:
+                time.sleep(interval)
+            else:
+                # Slice the wait, reporting throughout. One long sleep blocks the main
+                # thread, so Houdini never gets the event-loop time to raise and paint
+                # its progress dialog and a short job shows no bar at all. This also
+                # services Cancel, which raises hou.OperationInterrupted.
+                _end = time.time() + interval
+                while True:
+                    op.updateProgress(last_prog)
+                    _left = _end - time.time()
+                    if _left <= 0:
+                        break
+                    time.sleep(min(0.05, _left))
             # stop if a newer Generate has replaced this job
             if _main(lambda: node.parm("job_id").eval()) != job_id:
                 break
