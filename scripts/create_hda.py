@@ -972,18 +972,11 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
 
     # Tab: Generate - the everyday controls.
     gen = hou.FolderParmTemplate("fld_generate", "Generate", folder_type=hou.folderType.Tabs)
-    gen.addParmTemplate(hou.StringParmTemplate(
-        "prompt", "Prompt", 1,
-        default_value=("a person walks forward",),
-        tags={"editor": "1", "editorlines": "4-8"},
-        is_hidden=True,
-        help=_PROMPT_HELP,
-    ))
     gen.addParmTemplate(hou.ButtonParmTemplate(
         "open_timeline", "Open Timeline",
         script_callback=_OPEN_TIMELINE_CB,
         script_callback_language=hou.scriptLanguage.Python,
-        join_with_next=True,
+        is_label_hidden=True, join_with_next=True,
         help="Open the __Kimodo Timeline__ panel for this node: prompt segments laid end to "
              "end, transitions, and Full Body / hand / foot pose tracks.\nWhile a timeline "
              "exists it owns Prompt, Duration and the pose parameters below.\n\n"
@@ -997,8 +990,46 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
              "into _stands up from a squat_ + _turns around to face the opposite "
              "direction_ it managed 193 deg for the same total time.",
     ))
+    gen.addParmTemplate(hou.ButtonParmTemplate(
+        "generate", "Generate",
+        script_callback=generate_cb,
+        script_callback_language=hou.scriptLanguage.Python,
+        is_label_hidden=True, join_with_next=True,
+        help="Send the prompt to the server. Runs in the background; the node recooks when "
+             "the clip has downloaded.\nProgress shows in __Status__ and under the node.",
+    ))
+    gen.addParmTemplate(hou.ButtonParmTemplate(
+        "cancel", "Cancel",
+        script_callback=_CANCEL_CB,
+        script_callback_language=hou.scriptLanguage.Python,
+        is_label_hidden=True,
+        help="Cancel the queued job or discard the running one.",
+    ))
+    gen.addParmTemplate(hou.MenuParmTemplate(
+        "model", "Model",
+        ("Kimodo-SOMA-RP-v1.1", "Kimodo-SOMA-SEED-v1.1", "Kimodo-SOMA-RP-v1"),
+        default_value=0,
+        help="Kimodo checkpoint, named _Family-Skeleton-Dataset-version_.\n"
+             "__RP__ = Bones Rigplay 1 (~700 h of mocap), the recommended default.\n"
+             "__SEED__ = BONES-SEED (288 h, public data), weaker but the benchmark's reference.",
+    ))
+    gen.addParmTemplate(hou.ToggleParmTemplate(
+        "force", "Force Regenerate",
+        default_value=False, join_with_next=True,
+        help="Bypass the server cache and run inference again even if an identical "
+             "_prompt + duration + model + constraints_ was generated before.",
+    ))
+    gen.addParmTemplate(hou.ToggleParmTemplate(
+        "wait_for_result", "Wait for Result",
+        default_value=False,
+        help="Block Houdini behind the standard progress dialog until the clip arrives, the way a "
+             "__File Cache__ does. __Cancel__ in that dialog cancels the job on the server.\n"
+             "Off (the default): the job runs in the background and you keep working; progress "
+             "shows in __Status__, under the node, and in the Kimodo Timeline panel.",
+    ))
     seg = hou.FolderParmTemplate("segments", "Sequences",
                                  folder_type=hou.folderType.ScrollingMultiparmBlock)
+    seg.setDefaultValue(1)          # a node always has at least one sequence
     seg.setConditional(hou.parmCondType.HideWhen, no_timeline)
     seg.addParmTemplate(hou.StringParmTemplate(
         "seg_prompt#", "Prompt", 1, default_value=("",),
@@ -1007,15 +1038,19 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
              "name the body mechanics, not the intent.",
     ))
     seg.addParmTemplate(hou.IntParmTemplate(
-        "seg_from#", "Frames", 1, default_value=(0,),
-        disable_when=always_off, join_with_next=True,
-        help="First scene frame of this sequence, counted from __Start Frame__. "
-             "Read-only: it follows the lengths above it.",
+        "seg_from#", "Frames", 1, default_value=(0,), is_hidden=True,
+        help="First scene frame of this sequence, counted from __Start Frame__.",
     ))
     seg.addParmTemplate(hou.IntParmTemplate(
-        "seg_to#", "to", 1, default_value=(0,),
-        disable_when=always_off, join_with_next=True,
-        help="Last scene frame of this sequence. Read-only.",
+        "seg_to#", "to", 1, default_value=(0,), is_hidden=True,
+        help="Last scene frame of this sequence.",
+    ))
+    seg.addParmTemplate(hou.LabelParmTemplate(
+        "seg_range#", "Frames", join_with_next=True,
+        # same sixteen-column trick as Status: one wide column would centre the text
+        column_labels=('`chs("seg_from#")` - `chs("seg_to#")`',) + ("",) * 15,
+        help="Scene frames this sequence occupies, counted from __Start Frame__. "
+             "Read-only: it follows the lengths above it.",
     ))
     seg.addParmTemplate(hou.IntParmTemplate(
         "seg_frames#", "Length", 1, default_value=(48,),
@@ -1039,6 +1074,13 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
              "Not available on the first sequence, which has no earlier motion to continue from.",
     ))
     gen.addParmTemplate(seg)
+    gen.addParmTemplate(hou.StringParmTemplate(
+        "prompt", "Prompt", 1,
+        default_value=("a person walks forward",),
+        tags={"editor": "1", "editorlines": "4-8"},
+        is_hidden=True,
+        help=_PROMPT_HELP,
+    ))
     gen.addParmTemplate(hou.IntParmTemplate(
         "duration_frames", "Duration (frames)", 1,
         default_value=(72,),
@@ -1048,43 +1090,6 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
              "(`72` = 3 s at 24 fps).\nConverted to seconds for Kimodo, which "
              "generates at 30 fps; with __Retime to Scene FPS__ on you get back exactly this "
              "many frames.",
-    ))
-    gen.addParmTemplate(hou.MenuParmTemplate(
-        "model", "Model",
-        ("Kimodo-SOMA-RP-v1.1", "Kimodo-SOMA-SEED-v1.1", "Kimodo-SOMA-RP-v1"),
-        default_value=0,
-        help="Kimodo checkpoint, named _Family-Skeleton-Dataset-version_.\n"
-             "__RP__ = Bones Rigplay 1 (~700 h of mocap), the recommended default.\n"
-             "__SEED__ = BONES-SEED (288 h, public data), weaker but the benchmark's reference.",
-    ))
-    gen.addParmTemplate(hou.ButtonParmTemplate(
-        "generate", "Generate",
-        script_callback=generate_cb,
-        script_callback_language=hou.scriptLanguage.Python,
-        join_with_next=True,
-        help="Send the prompt to the server. Runs in the background; the node recooks when "
-             "the clip has downloaded.\nProgress shows in __Status__ and under the node.",
-    ))
-    gen.addParmTemplate(hou.ButtonParmTemplate(
-        "cancel", "Cancel",
-        script_callback=_CANCEL_CB,
-        script_callback_language=hou.scriptLanguage.Python,
-        join_with_next=True,
-        help="Cancel the queued job or discard the running one.",
-    ))
-    gen.addParmTemplate(hou.ToggleParmTemplate(
-        "force", "Force Regenerate",
-        default_value=False, join_with_next=True,
-        help="Bypass the server cache and run inference again even if an identical "
-             "_prompt + duration + model + constraints_ was generated before.",
-    ))
-    gen.addParmTemplate(hou.ToggleParmTemplate(
-        "wait_for_result", "Wait for Result",
-        default_value=False,
-        help="Block Houdini behind the standard progress dialog until the clip arrives, the way a "
-             "__File Cache__ does. __Cancel__ in that dialog cancels the job on the server.\n"
-             "Off (the default): the job runs in the background and you keep working; progress "
-             "shows in __Status__, under the node, and in the Kimodo Timeline panel.",
     ))
     gen.addParmTemplate(hou.StringParmTemplate(
         "status", "Status", 1,
@@ -1102,14 +1107,20 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
         help="Length of the last generated clip in samples and seconds.",
     ))
     gen.addParmTemplate(hou.LabelParmTemplate(
-        "status_label", "Status", column_labels=('`chs("status")`',),
+        "status_label", "Status",
+        # A label parm centres its text within each column, so one wide column puts it
+        # in the middle. Sixteen columns leave the value in a narrow first one, hard left.
+        column_labels=('`chs("status")`',) + ("",) * 15,
         help="Live job state: `Queued`, `Running (Ns)`, `Downloading`, `Done (Ns)`, "
              "`Done (cached)`, `Failed`, `Cancelled`.\nAlso shows the "
              "__Test Connection__ result, and the seam measurement after "
              "__Regenerate From Here__.",
     ))
     gen.addParmTemplate(hou.LabelParmTemplate(
-        "clip_label", "Clip", column_labels=('`chs("clip_info")`',),
+        "clip_label", "Clip",
+        # A label parm centres its text within each column, so one wide column puts it
+        # in the middle. Sixteen columns leave the value in a narrow first one, hard left.
+        column_labels=('`chs("clip_info")`',) + ("",) * 15,
         help="Length of the last generated clip in seconds, scene frames and samples.",
     ))
     ptg.append(gen)
@@ -1290,6 +1301,16 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
                 return '    inputlabel\t%s\t"%s"\n' % (n, lbl)
         return line
     ds = [_relabel(line) for line in ds]
+    # A multiparm's count has no min/max in HOM; clamp it in the DialogScript so the
+    # Sequences block cannot be emptied to zero.
+    for i, line in enumerate(ds):
+        if line.strip() == 'name    "segments"':
+            for j in range(i, min(i + 6, len(ds))):
+                if ds[j].lstrip().startswith("default"):
+                    indent = ds[j][:len(ds[j]) - len(ds[j].lstrip())]
+                    ds.insert(j + 1, indent + "range   { 1! 100 }\n")
+                    break
+            break
     after = max(i for i, line in enumerate(ds) if line.lstrip().startswith("inputlabel"))
     inject = "".join('    outputlabel\t%d\t"%s"\n' % (i + 1, lbl) for i, lbl in enumerate(labels))
     hda_def.addSection("DialogScript", "".join(ds[:after + 1]) + inject + "".join(ds[after + 1:]))
