@@ -33,17 +33,32 @@ TRACK_COLORS = {
     "RightHand": QtGui.QColor("#ff8a65"), "LeftFoot": QtGui.QColor("#7ed491"),
     "RightFoot": QtGui.QColor("#d98cf0"),
 }
-def later(fn):
-    """Run fn from the event loop rather than from inside the handler we are in.
+def later(fn, _poll_ms=16):
+    """Run fn from the event loop, and only once no mouse button is held.
 
-    Anything that opens a nested event loop (a modal dialog) or hands control to Houdini
-    (a progress dialog, a forced cook, a parm button callback) must not do it during Qt
-    event dispatch. The dialog is then created while Qt is still dispatching, so it never
-    gets the event-loop time to paint and no progress bar appears at all; and Houdini,
-    which blocks mouse input to its own panes while it believes an operation is running,
-    can be left with that block in place after the operation has finished.
+    Two separate hazards, one helper.
+
+    Deferring at all: anything that opens a nested event loop, or hands control to
+    Houdini, must not do it while Qt is still dispatching an event.
+
+    Waiting for the release is the important half. SideFX document that "a mouse button
+    event sent to any Qt widget in the Houdini process will cause all open Houdini menus
+    to close", that Houdini "tracks mouse button events globally across all Qt widgets",
+    and that the flag guarding this is re-enabled "on the next mouse button release"
+    (hou.qt.skipClosingMenusForCurrentButtonPress). Open a nested event loop between a
+    real press and its release and Houdini never sees that release, so its global mouse
+    state never rebalances: its own panes stop answering the mouse while plain Qt widgets
+    carry on, until a restart.
+
+    That also explains why this was so hard to reproduce. A synthetic QAction.trigger()
+    creates no press/release pair at all, so it never wedges; only a real click does.
     """
-    QtCore.QTimer.singleShot(0, fn)
+    def go():
+        if QtWidgets.QApplication.mouseButtons() != QtCore.Qt.NoButton:
+            QtCore.QTimer.singleShot(_poll_ms, go)     # still held, wait for the release
+            return
+        fn()
+    QtCore.QTimer.singleShot(0, go)
 
 
 def text_on(bg):

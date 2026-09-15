@@ -104,6 +104,17 @@ def test_context_menu_is_unparented():
     assert "QtWidgets.QMenu(self)" not in menu_fn, "parenting the menu to the Canvas leaks it"
 
 
+def test_deferral_waits_for_the_mouse_release():
+    """Houdini tracks mouse buttons globally across every Qt widget and clears that state
+    on the next release (hou.qt.skipClosingMenusForCurrentButtonPress documents both).
+    Opening a nested event loop between a real press and its release means Houdini never
+    sees the release, and its own panes stop answering the mouse. later() must wait."""
+    src = _read(os.path.join(PKG, "widget.py"))
+    fn = _func_source(src, "later")
+    assert "mouseButtons()" in fn, "later() must not run while a mouse button is held"
+    assert "NoButton" in fn, "later() must compare against Qt.NoButton"
+
+
 def test_source_is_ascii():
     """Escapes, not literal glyphs, so the files survive any encoding they pass through."""
     for name, src in _modules():
