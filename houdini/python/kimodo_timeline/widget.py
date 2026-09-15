@@ -11,7 +11,7 @@ from __future__ import annotations
 import html
 
 import hou
-from .qt import QtCore, QtGui, QtWidgets
+from .qt import QtCore, QtGui, QtWidgets, event_pos, run_exec
 
 from . import bridge
 from .model import MIN_FRAMES, TRACKS, TRACK_LABELS, Timeline
@@ -183,7 +183,7 @@ class Canvas(QtWidgets.QWidget):
     def wheelEvent(self, ev):
         delta = ev.angleDelta().y() or ev.angleDelta().x()
         if delta:
-            self.zoom(1.15 ** (delta / 120.0), ev.position().x())
+            self.zoom(1.15 ** (delta / 120.0), event_pos(ev).x())
         ev.accept()
 
     def keyPressEvent(self, ev):
@@ -352,7 +352,7 @@ class Canvas(QtWidgets.QWidget):
 
     # -- mouse ----------------------------------------------------------------
     def mousePressEvent(self, ev):
-        pos = ev.position()
+        pos = event_pos(ev)
         if ev.button() == QtCore.Qt.MiddleButton:
             self._mode = "pan"; self._pan_x = pos.x(); self.setCursor(QtCore.Qt.ClosedHandCursor); return
         if ev.button() != QtCore.Qt.LeftButton:
@@ -374,7 +374,7 @@ class Canvas(QtWidgets.QWidget):
                 self._mode, self._track, self._key = "key", track, k
 
     def mouseMoveEvent(self, ev):
-        pos = ev.position()
+        pos = event_pos(ev)
         if self._mode == "pan":
             self.pan(pos.x() - self._pan_x); self._pan_x = pos.x(); return
         if self._mode == "scrub":
@@ -458,7 +458,7 @@ class Canvas(QtWidgets.QWidget):
         self.update()
 
     def mouseDoubleClickEvent(self, ev):
-        pos = ev.position()
+        pos = event_pos(ev)
         row, track = self._row_of(pos.y())
         if row == "prompt":
             i, _ = self._seg_at(pos)
@@ -514,7 +514,7 @@ class Canvas(QtWidgets.QWidget):
             return
         menu.addSeparator()
         menu.addAction("Fit timeline  (F)", self.fit)
-        menu.exec(ev.globalPos())
+        run_exec(menu, ev.globalPos())
         menu.deleteLater()          # one menu was leaking per right-click
 
     def _scrub_to(self, x):
@@ -536,7 +536,7 @@ class Canvas(QtWidgets.QWidget):
         deleteLater.
         """
         dlg = PromptDialog(prompt, frames, hou.qt.mainWindow())
-        accepted = dlg.exec() == QtWidgets.QDialog.Accepted
+        accepted = run_exec(dlg) == QtWidgets.QDialog.Accepted
         text, count = dlg.text(), dlg.frames()
         dlg.deleteLater()
         return accepted, text, count

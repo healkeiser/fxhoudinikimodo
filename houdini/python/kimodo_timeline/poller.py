@@ -14,7 +14,7 @@ import time
 
 import hou
 import requests
-from .qt import QtCore, QtWidgets
+from .qt import QtWidgets
 
 POLL_S = 1.0          # seconds between server queries; the callback itself runs far more often
 MAX_FAILS = 3
