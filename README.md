@@ -127,9 +127,12 @@ Two halves: a **Docker server** that runs Kimodo, and a **Houdini package** that
 
 ### Server
 
+Clone [healkeiser/kimodo](https://github.com/healkeiser/kimodo) rather than NVIDIA's repository directly. It is a fork of `nv-tlabs/kimodo` that is one commit ahead: `initial_motion` on `_multiprompt`, which [regenerating part of a clip](#regenerating-part-of-a-clip) needs. The commit is purely additive, so everything else behaves identically, and upstream is still there as a remote to pull from.
+
 ```shell
-git clone https://github.com/nv-tlabs/kimodo.git
+git clone https://github.com/healkeiser/kimodo.git
 cd kimodo
+git remote add upstream https://github.com/nv-tlabs/kimodo.git
 git clone https://github.com/nv-tlabs/kimodo-viser.git
 docker build -t kimodo:1.0 .
 
@@ -274,7 +277,7 @@ Holding the *end* is a separate problem, because whatever follows was generated 
 
 ### Requirements and limits
 
-- Needs the patched `kimodo_model.py` alongside `kimodo_server.py`. Without it the server returns 422 and the node says so.
+- Needs `initial_motion` in `kimodo/model/kimodo_model.py`, which the [fork](https://github.com/healkeiser/kimodo) used in [Installation](#server) already has. Against stock `nv-tlabs/kimodo` the server returns 422 and the node tells you to update it.
 - The timeline must still describe the clip on disk. Edit a sequence length and the node refuses until you press __Generate__, because the cut would otherwise land in the wrong place.
 - The first sequence has no earlier motion to continue from, so both buttons are disabled on it.
 - Join quality depends on how dynamic the motion is where it joins: 0.21x joining into a settle, 1.83x joining straight after a jump.
