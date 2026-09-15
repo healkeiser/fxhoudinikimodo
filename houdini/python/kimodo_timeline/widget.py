@@ -812,7 +812,8 @@ class TimelineWidget(QtWidgets.QWidget):
 
     def _regen(self, index, to_end=False):
         """Re-roll a sequence, keeping what came before and, unless `to_end`, what comes
-        after. Imported lazily: it needs numpy, and the rest of the panel does not."""
+        after. Returns as soon as the job is queued; the merge happens on Houdini's event
+        loop. Imported lazily: it needs numpy, and the rest of the panel does not."""
         if self.node is None:
             return
         self._write("Kimodo timeline: regenerate")
@@ -822,15 +823,11 @@ class TimelineWidget(QtWidgets.QWidget):
             self.status_label.setText("regen unavailable: %s" % e)
             return
         try:
-            msg = regen.regenerate(self.node, index, to_end=to_end)
-        except hou.OperationInterrupted:
-            self.status_label.setText("Cancelled")
+            self.status_label.setText(regen.regenerate(self.node, index, to_end=to_end))
         except Exception as e:
             self.status_label.setText(str(e))
             if hou.isUIAvailable():
                 hou.ui.setStatusMessage("Kimodo: %s" % e, severity=hou.severityType.Error)
-        else:
-            self.status_label.setText(msg)
 
     def _generate(self):
         if self.node is None:

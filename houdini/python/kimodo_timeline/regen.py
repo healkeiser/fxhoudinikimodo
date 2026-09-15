@@ -24,7 +24,6 @@ The pure functions take plain data so they can be tested without Houdini.
 from __future__ import annotations
 
 import io
-import time
 
 import numpy as np
 
@@ -122,24 +121,7 @@ def load_npz_bytes(blob: bytes) -> dict:
 # -- Houdini side -------------------------------------------------------------
 # Below the pure functions so the module still imports without hou.
 
-def wait_reporting(bar, seconds: float, progress: float, slice_s: float = 0.05) -> bool:
-    """Sleep in slices, reporting the whole way. True if Cancel was pressed.
-
-    One long sleep starves the event loop, so the dialog cannot paint and Cancel cannot
-    be clicked. Slicing keeps both alive: bar.update pumps events every 50 ms.
-    """
-    end = time.monotonic() + seconds
-    while True:
-        bar.update(progress)
-        if bar.cancelled:
-            return True
-        left = end - time.monotonic()
-        if left <= 0:
-            return False
-        time.sleep(min(slice_s, left))
-
-
-def regenerate(node, seg_index: int, to_end: bool = False, poll: float = 2.0):
+def regenerate(node, seg_index: int, to_end: bool = False):
     """Re-roll sequence `seg_index` (0-based), in place.
 
     By default only that sequence: its head is joined with continue_from and its tail is
@@ -151,11 +133,10 @@ def regenerate(node, seg_index: int, to_end: bool = False, poll: float = 2.0):
     `to_end` re-rolls this sequence and every one after it instead, which is what you
     want when the change should carry through the rest of the clip.
 
-    Blocks behind a progress dialog: a partial regen is short, and the alternative is a
-    second copy of the background poller in the generate callback. The dialog is our own
-    QProgressDialog rather than hou.InterruptableOperation, which stays hidden until
-    HOUDINI_INTERRUPT_THRESH seconds have passed and so never appeared for a job this
-    short. Returns a one-line summary for the node's Status.
+    Returns as soon as the job is queued; a JobWatcher on Houdini's event loop finishes
+    the merge when the clip arrives, so Houdini stays interactive throughout. Progress
+    and the final seam measurement land on the node's Status parm, which the Timeline
+    panel displays.
     """
     import os
 
@@ -222,54 +203,42 @@ def regenerate(node, seg_index: int, to_end: bool = False, poll: float = 2.0):
     job = resp.json()["job_id"]
 
     what = "sequence %d" % (seg_index + 1) if single else "from sequence %d" % (seg_index + 1)
-    from .progress import JobProgress
 
-    def _cancel_job():
-        try:
-            requests.post("%s/jobs/%s/cancel" % (url, job), timeout=10)
-        except Exception:
-            pass                      # the dialog is closing either way
-        raise hou.OperationInterrupted("Cancelled")
-
-    with JobProgress("Kimodo", "Regenerating " + what) as bar:
-        last = 0.0
-        while True:
-            if wait_reporting(bar, poll, last):
-                _cancel_job()
-            d = requests.get("%s/jobs/%s" % (url, job), timeout=15).json()
-            if d["status"] == "done":
-                break
-            if d["status"] in ("failed", "cancelled"):
-                raise RuntimeError(d.get("error") or d["status"])
-            if d.get("progress") is not None:
-                last = float(d["progress"])
-                bar.update(last, "%s  %d%%" % (what, int(last * 100)))
-        bar.update(1.0, "Downloading clip")
+    def _merge(data, suffix):
+        """Runs on the main thread when the job finishes, from the event-loop callback."""
         blob = requests.get("%s/jobs/%s/download" % (url, job), timeout=180).content
         new = load_npz_bytes(blob)
+        merged = splice(old, new, cut, n, resume_at=resume_at)
+        head_at = cut - n
+        normal = mean_step(old)
+        jump = seam_jump(merged, head_at)
+        joins = "%.2f cm" % (jump * 100)
+        worst = jump
+        if resume_at is not None:                  # a single sequence has two joins
+            tail_jump = seam_jump(merged, head_at + new["posed_joints"].shape[0])
+            joins = "%.2f / %.2f cm" % (jump * 100, tail_jump * 100)
+            worst = max(worst, tail_jump)
 
-    merged = splice(old, new, cut, n, resume_at=resume_at)
-    head_at = cut - n
-    normal = mean_step(old)
-    jump = seam_jump(merged, head_at)
-    joins = "%.2f cm" % (jump * 100)
-    worst = jump
-    if resume_at is not None:                      # a single sequence has two joins
-        tail_jump = seam_jump(merged, head_at + new["posed_joints"].shape[0])
-        joins = "%.2f / %.2f cm" % (jump * 100, tail_jump * 100)
-        worst = max(worst, tail_jump)
+        out = os.path.join(os.path.dirname(src), "%s_joined.npz" % job)
+        np.savez(out, **merged)
+        total = merged["posed_joints"].shape[0]
+        secs = total / source_fps
+        node.parm("npz_path").set(out.replace(chr(92), "/"))
+        node.parm("clip_info").set(
+            "%.2f s = %d frames @ %g fps (%d samples @ %g fps)"
+            % (secs, round(secs * scene_fps), scene_fps, total, source_fps))
+        node.parm("progress").set(1.0)
+        msg = ("Regenerated %s; seam %s vs %.2f cm/sample (%.2fx)"
+               % (what, joins, normal * 100, worst / normal))
+        node.parm("status").set(msg)
+        node.parm("job_id").set("")
+        node.cook(force=True)
+        if hou.isUIAvailable():
+            hou.ui.setStatusMessage("Kimodo: " + msg, severity=hou.severityType.ImportantMessage)
 
-    out = os.path.join(os.path.dirname(src), "%s_joined.npz" % job)
-    np.savez(out, **merged)
-    total = merged["posed_joints"].shape[0]
-    secs = total / source_fps
-    node.parm("npz_path").set(out.replace("\\", "/"))
-    node.parm("clip_info").set(
-        "%.2f s = %d frames @ %g fps (%d samples @ %g fps)"
-        % (secs, round(secs * scene_fps), scene_fps, total, source_fps))
-    node.parm("progress").set(1.0)
-    msg = ("Regenerated %s; seam %s vs %.2f cm/sample (%.2fx)"
-           % (what, joins, normal * 100, worst / normal))
-    node.parm("status").set(msg)      # so the node agrees with whoever called us
-    node.cook(force=True)
-    return msg
+    from .poller import JobWatcher
+    node.parm("job_id").set(job)
+    node.parm("progress").set(0.0)
+    node.parm("status").set("Queued (%s...)" % job[:8])
+    JobWatcher(node, url, job, "Regenerating " + what, _merge).start()
+    return "Regenerating %s; watch the node's Status." % what

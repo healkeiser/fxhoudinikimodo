@@ -264,8 +264,6 @@ def run_regenerate(node, index, to_end=False):
         raise
     try:
         msg = regen.regenerate(node, index, to_end=to_end)
-    except hou.OperationInterrupted:
-        node.parm("status").set("Cancelled")
     except Exception as e:
         node.parm("last_error").set(str(e))
         node.parm("status").set("Error: %s" % e)

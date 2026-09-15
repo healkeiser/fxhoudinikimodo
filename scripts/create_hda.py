@@ -163,8 +163,6 @@ def run_regenerate(node, index, to_end=False):
         raise
     try:
         msg = regen.regenerate(node, index, to_end=to_end)
-    except hou.OperationInterrupted:
-        node.parm("status").set("Cancelled")
     except Exception as e:
         node.parm("last_error").set(str(e))
         node.parm("status").set("Error: %s" % e)
@@ -313,7 +311,7 @@ _cook()
 """
 
 _GENERATE_CB = r"""
-import json, threading, time, requests, hou
+import json, os, requests, hou
 import numpy as np
 
 node         = kwargs["node"]
@@ -528,163 +526,53 @@ else:
     node.parm("job_id").set(job_id)
     node.parm("progress").set(0.0)
     node.parm("status").set(f"Queued ({job_id[:8]}...)")
-    if hou.isUIAvailable():
-        hou.ui.setStatusMessage("Kimodo: generation started, watch the node's Status field.",
-                                severity=hou.severityType.ImportantMessage)
 
-    def _poll(op=None):
-        # HOM/UI calls are not thread-safe: marshal them to the main thread. With `op` set we
-        # are already ON the main thread (Wait for Result), so call straight through -- the
-        # marshalling would deadlock against our own blocking loop.
-        import hdefereval, os
-        if op is None:
-            def _main(fn):
-                return hdefereval.executeInMainThreadWithResult(fn)
-            def _statusbar(text, severity=hou.severityType.ImportantMessage):
-                if hou.isUIAvailable():
-                    hdefereval.executeDeferred(lambda: hou.ui.setStatusMessage(text, severity=severity))
-        else:
-            def _main(fn):
-                return fn()
-            def _statusbar(text, severity=hou.severityType.ImportantMessage):
-                hou.ui.setStatusMessage(text, severity=severity)
-        def _set(parm, val):
-            _main(lambda: node.parm(parm).set(val))
-        def _fail(text):
-            _main(lambda: fail(text))
-        interval = 1.0 if op is not None else 5.0
-        last_prog = 0.0
-        fails = 0
-        while True:
-            if op is None:
-                time.sleep(interval)
-            else:
-                # Slice the wait so the dialog paints and Cancel stays clickable: one
-                # long sleep starves the event loop. op.update pumps events every 50 ms.
-                _end = time.time() + interval
-                while True:
-                    op.update(last_prog)
-                    if op.cancelled:
-                        raise hou.OperationInterrupted("Cancelled")
-                    _left = _end - time.time()
-                    if _left <= 0:
-                        break
-                    time.sleep(min(0.05, _left))
-            # stop if a newer Generate has replaced this job
-            if _main(lambda: node.parm("job_id").eval()) != job_id:
-                break
-            try:
-                r = requests.get(f"{url}/jobs/{job_id}", timeout=10)
-                if r.status_code == 404:
-                    _fail("Job lost (server restarted?)")
-                    _set("job_id", "")
-                    break
-                r.raise_for_status()
-                data = r.json()
-                fails = 0
-            except Exception as e:
-                fails += 1
-                _set("status", f"Poll error ({fails}/3): {e}")
-                if fails >= 3:
-                    _fail(f"Lost contact with the server while polling: {e}")
-                    _set("job_id", "")
-                    break
-                continue
-            status  = data["status"]
-            elapsed = data.get("elapsed")
-            elapsed_str = f" ({int(elapsed)}s)" if elapsed else ""
-            if status == "done":
-                frames, joints = data["frames"], data["joints"]
-                done_label = f"Done{elapsed_str}" + (" (cached)" if data.get("cached") else "")
-                if op is not None:
-                    last_prog = 1.0
-                    op.update(1.0, "Downloading clip")
-                try:
-                    _set("status", f"Downloading...{elapsed_str}")
-                    os.makedirs(download_dir, exist_ok=True)
-                    # forward slashes: Houdini's own convention, and what the user typed
-                    local_npz = download_dir.rstrip("/\\") + f"/{job_id}.npz"
-                    with requests.get(f"{url}/jobs/{job_id}/download", timeout=120, stream=True) as dl:
-                        dl.raise_for_status()
-                        with open(local_npz, "wb") as fh:
-                            for chunk in dl.iter_content(chunk_size=1 << 20):
-                                fh.write(chunk)
-                except Exception as e:
-                    _fail(f"NPZ download failed: {e}")
-                    _set("job_id", "")
-                    break
-                def _finish():
-                    fps = node.parm("source_fps").eval() or 30
-                    secs = frames / fps
-                    node.parm("status").set(done_label)
-                    node.parm("progress").set(1.0)
-                    node.parm("clip_info").set(
-                        f"{secs:.2f} s = {round(secs * hou.fps())} frames @ {hou.fps():g} fps "
-                        f"({frames} samples @ {fps:g} fps)")
-                    node.parm("npz_path").set(local_npz)
-                    node.parm("job_id").set("")
-                    node.cook(force=True)
-                _main(_finish)
-                _statusbar(f"Kimodo: generated {frames} frames ({joints} joints){elapsed_str}.")
-                break
-            elif status == "failed":
-                _fail(f"Generation failed: {data.get('error') or 'no detail from server'}")
-                _set("job_id", "")
-                break
-            elif status == "cancelled":
-                _set("status", "Cancelled")
-                _set("job_id", "")
-                break
-            else:
-                prog, phase = data.get("progress"), data.get("phase")
-                if prog is not None:
-                    last_prog = float(prog)
-                    _set("progress", last_prog)
-                    label = f"Running {int(prog * 100):d}%" + (f" \u00b7 {phase}" if phase else "") + elapsed_str
-                    _set("status", label)
-                    if op is not None:
-                        op.update(last_prog, label)
-                else:
-                    label = f"Running...{elapsed_str}"
-                    _set("status", label)
-                    if op is not None:
-                        op.update(last_prog, label)
-
-    if bool(node.parm("wait_for_result").eval()) and hou.isUIAvailable():
-        # Blocking mode: the same loop, on the main thread, behind a progress dialog.
-        # Ours, not hou.InterruptableOperation, which stays hidden until
-        # HOUDINI_INTERRUPT_THRESH seconds have passed and so never showed for a job
-        # that finishes in two. Cancel maps onto the server's own cancel endpoint.
+    def _finish(data, suffix):
+        # Runs on the main thread from the event-loop callback, so plain HOM calls are
+        # fine here: no thread marshalling, no deferred eval.
+        frames, joints = data["frames"], data["joints"]
         try:
-            from kimodo_timeline.progress import JobProgress
-            _bar = JobProgress("Kimodo", "Generating motion")
-        except ImportError:
-            # HDA installed without houdini/python on PYTHONPATH: fall back to Houdini's
-            # own dialog, which works but stays hidden for the first few seconds.
-            class _bar:
-                def __init__(self, *a): pass
-                def __enter__(self):
-                    self._op = hou.InterruptableOperation(
-                        "Generating motion", open_interrupt_dialog=True).__enter__()
-                    return self
-                def update(self, f, label=None): self._op.updateProgress(f)
-                cancelled = False
-                def __exit__(self, *e): return self._op.__exit__(*e)
-            _bar = _bar()
-        try:
-            with _bar as op:
-                _poll(op)
-        except hou.OperationInterrupted:
-            node.parm("status").set("Cancelling...")
-            try:
-                requests.post(f"{url}/jobs/{job_id}/cancel", timeout=10)
-            except Exception as e:
-                node.parm("status").set(f"Cancel failed: {e}")
-            else:
-                node.parm("status").set("Cancelled")
+            node.parm("status").set(f"Downloading...{suffix}")
+            os.makedirs(download_dir, exist_ok=True)
+            # forward slashes: Houdini's own convention, and what the user typed
+            local_npz = download_dir.rstrip("/\\") + f"/{job_id}.npz"
+            with requests.get(f"{url}/jobs/{job_id}/download", timeout=120, stream=True) as dl:
+                dl.raise_for_status()
+                with open(local_npz, "wb") as fh:
+                    for chunk in dl.iter_content(chunk_size=1 << 20):
+                        fh.write(chunk)
+        except Exception as e:
+            fail(f"NPZ download failed: {e}")
             node.parm("job_id").set("")
+            return
+        src_fps = node.parm("source_fps").eval() or 30
+        secs = frames / src_fps
+        node.parm("status").set(f"Done{suffix}" + (" (cached)" if data.get("cached") else ""))
+        node.parm("progress").set(1.0)
+        node.parm("clip_info").set(
+            f"{secs:.2f} s = {round(secs * hou.fps())} frames @ {hou.fps():g} fps "
+            f"({frames} samples @ {src_fps:g} fps)")
+        node.parm("npz_path").set(local_npz)
+        node.parm("job_id").set("")
+        node.cook(force=True)
+        if hou.isUIAvailable():
+            hou.ui.setStatusMessage(
+                f"Kimodo: generated {frames} frames ({joints} joints){suffix}.",
+                severity=hou.severityType.ImportantMessage)
+
+    # Non-blocking, the way SideFX polls (hdefereval is built on the same callback):
+    # Houdini stays interactive, progress lands on the node's parms, and the Timeline
+    # panel's bar renders it. No sleeping on the main thread, no modal dialog, no
+    # background thread marshalling HOM calls back with hdefereval.
+    try:
+        from kimodo_timeline.poller import JobWatcher
+    except ImportError:
+        fail("Generate needs houdini/python on PYTHONPATH (the fxhoudinikimodo package).")
     else:
-        threading.Thread(target=_poll, daemon=True).start()
+        JobWatcher(node, url, job_id, "Running", _finish).start()
+        if hou.isUIAvailable():
+            hou.ui.setStatusMessage("Kimodo: generation started, watch the node's Status field.",
+                                    severity=hou.severityType.ImportantMessage)
 """
 
 # Cancel is identical for both HDAs (same server endpoint).
@@ -1047,8 +935,9 @@ def build_hda(node_name, description, hda_path, generate_cb):
         script_callback=generate_cb,
         script_callback_language=hou.scriptLanguage.Python,
         is_label_hidden=True, join_with_next=True,
-        help="Send the prompt to the server. Runs in the background; the node recooks when "
-             "the clip has downloaded.\nProgress shows in __Status__ and under the node.",
+        help="Send the prompt to the server. Houdini stays interactive; the node recooks "
+             "when the clip has downloaded.\nProgress shows in __Status__, under the node, "
+             "and as a bar in the Kimodo Timeline panel. __Cancel__ stops it.",
     ))
     gen.addParmTemplate(hou.ButtonParmTemplate(
         "cancel", "Cancel",
@@ -1067,17 +956,9 @@ def build_hda(node_name, description, hda_path, generate_cb):
     ))
     gen.addParmTemplate(hou.ToggleParmTemplate(
         "force", "Force Regenerate",
-        default_value=True, join_with_next=True,
+        default_value=True,
         help="Bypass the server cache and run inference again even if an identical "
              "_prompt + duration + model + constraints_ was generated before.",
-    ))
-    gen.addParmTemplate(hou.ToggleParmTemplate(
-        "wait_for_result", "Wait for Result",
-        default_value=True,
-        help="Block Houdini behind the standard progress dialog until the clip arrives, the way a "
-             "__File Cache__ does. __Cancel__ in that dialog cancels the job on the server.\n"
-             "Off (the default): the job runs in the background and you keep working; progress "
-             "shows in __Status__, under the node, and in the Kimodo Timeline panel.",
     ))
     seg = hou.FolderParmTemplate("segments", "Sequences",
                                  folder_type=hou.folderType.ScrollingMultiparmBlock)
