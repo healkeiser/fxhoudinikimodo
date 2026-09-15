@@ -111,9 +111,9 @@
             name    "duration_frames"
             label   "Duration (frames)"
             type    integer
+            invisible
             default { "72" }
             help    "Length of the clip in __scene frames__ at the current `$FPS` (`72` = 3 s at 24 fps).\nConverted to seconds for Kimodo, which generates at 30 fps; with __Retime to Scene FPS__ on you get back exactly this many frames."
-            disablewhen "{ has_timeline == 1 }"
             range   { 12 720 }
         }
         parm {
@@ -152,6 +152,7 @@
             name    "force"
             label   "Force Regenerate"
             type    toggle
+            joinnext
             default { "0" }
             help    "Bypass the server cache and run inference again even if an identical _prompt + duration + model + constraints_ was generated before."
         }
@@ -166,17 +167,31 @@
             name    "status"
             label   "Status"
             type    string
+            invisible
             default { "" }
             help    "Live job state: `Queued`, `Running (Ns)`, `Downloading`, `Done (Ns)`, `Done (cached)`, `Failed`, `Cancelled`.\nAlso shows the __Test Connection__ result."
-            disablewhen "{ status != __never__ }"
         }
         parm {
             name    "clip_info"
             label   "Clip"
             type    string
+            invisible
             default { "" }
             help    "Length of the last generated clip in samples and seconds."
-            disablewhen "{ status != __never__ }"
+        }
+        parm {
+            name    "status_label"
+            label   "Status"
+            type    label
+            default { "`chs(\"status\")`" }
+            help    "Live job state: `Queued`, `Running (Ns)`, `Downloading`, `Done (Ns)`, `Done (cached)`, `Failed`, `Cancelled`.\nAlso shows the __Test Connection__ result, and the seam measurement after __Regenerate From Here__."
+        }
+        parm {
+            name    "clip_label"
+            label   "Clip"
+            type    label
+            default { "`chs(\"clip_info\")`" }
+            help    "Length of the last generated clip in seconds, scene frames and samples."
         }
     }
 

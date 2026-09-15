@@ -557,10 +557,6 @@ class TimelineWidget(QtWidgets.QWidget):
         self.warn_label = QtWidgets.QLabel("")
         self.warn_label.setStyleSheet("font-weight: bold; color: #e0a030")
         head.addWidget(self.warn_label); head.addStretch(1)
-        self.detach_btn = QtWidgets.QPushButton("Detach timeline")
-        self.detach_btn.setToolTip("Drop the timeline and go back to the node's Prompt + Duration. Undoable.")
-        self.detach_btn.clicked.connect(self._detach)
-        head.addWidget(self.detach_btn)
         lay.addLayout(head)
 
         self.canvas = Canvas(self)
@@ -675,7 +671,7 @@ class TimelineWidget(QtWidgets.QWidget):
         except Exception:
             self.node = None
         enabled = self.node is not None
-        for w in (self.canvas, self.transition, self.gen_btn, self.cancel_btn, self.detach_btn, self.fit_btn, self.key_btn, self.key_track):
+        for w in (self.canvas, self.transition, self.gen_btn, self.cancel_btn, self.fit_btn, self.key_btn, self.key_track):
             w.setEnabled(enabled)
         if not enabled:
             self.warn_label.setText("")
@@ -693,7 +689,6 @@ class TimelineWidget(QtWidgets.QWidget):
         self.progress.setVisible(prog is not None)
         if prog is not None:
             self.progress.setValue(int(prog * 1000))
-        self.detach_btn.setVisible(bridge.has_timeline(self.node))
         i = self.node_combo.findData(self.node.path())
         if i >= 0 and i != self.node_combo.currentIndex():
             self.node_combo.blockSignals(True)
@@ -738,10 +733,6 @@ class TimelineWidget(QtWidgets.QWidget):
     def _transition_changed(self, v):
         self.canvas.tl.transition_frames = int(v); self._write("Kimodo timeline: transition")
         self.canvas.update()
-
-    def _detach(self):
-        if self.node is not None:
-            bridge.detach(self.node); self._load(self.node)
 
     def _generate(self):
         if self.node is None:

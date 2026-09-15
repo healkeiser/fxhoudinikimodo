@@ -64,17 +64,6 @@ def save(node, tl: Timeline, label: str = "Kimodo timeline edit") -> None:
             pass          # older HDA build without the multiparm
 
 
-def detach(node) -> None:
-    """Drop the timeline; the node goes back to Prompt + Duration. Keeps the first
-    segment's text as the prompt so nothing is lost."""
-    tl = load(node)
-    with hou.undos.group("Kimodo timeline detach"):
-        if tl.segments:
-            node.parm("prompt").set(tl.segments[0].prompt)
-        node.parm("timeline_json").set("")
-        node.parm("has_timeline").set(0)
-
-
 def start_frame(node) -> int:
     return int(node.parm("start_frame").eval())
 

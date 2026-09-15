@@ -776,30 +776,6 @@ if tab is not None:
 """
 
 # Runs when a node of this type is created: generator shape, default colour.
-_DETACH_CB = r"""
-import json, hou
-
-node = kwargs["node"]
-raw  = node.parm("timeline_json").eval().strip()
-first = ""
-if raw:
-    try:
-        segs = (json.loads(raw) or {}).get("segments") or []
-        if segs:
-            first = str(segs[0].get("prompt", "")).strip()
-    except Exception:
-        pass                      # unreadable timeline: still detach, just keep the old prompt
-with hou.undos.group("Kimodo timeline detach"):
-    if first:
-        node.parm("prompt").set(first)
-    node.parm("timeline_json").set("")
-    node.parm("has_timeline").set(0)
-if hou.isUIAvailable():
-    hou.ui.setStatusMessage("Kimodo: timeline detached, Prompt and Duration are live again.",
-                            severity=hou.severityType.ImportantMessage)
-"""
-
-
 _SEG_SYNC_CB = r"""
 import hou
 node = kwargs["node"]
@@ -1067,7 +1043,7 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
         "duration_frames", "Duration (frames)", 1,
         default_value=(72,),
         min=12, max=720, min_is_strict=False, max_is_strict=False,
-        disable_when=timeline_owns,
+        is_hidden=True,
         help="Length of the clip in __scene frames__ at the current `$FPS` "
              "(`72` = 3 s at 24 fps).\nConverted to seconds for Kimodo, which "
              "generates at 30 fps; with __Retime to Scene FPS__ on you get back exactly this "
@@ -1098,7 +1074,7 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
     ))
     gen.addParmTemplate(hou.ToggleParmTemplate(
         "force", "Force Regenerate",
-        default_value=False,
+        default_value=False, join_with_next=True,
         help="Bypass the server cache and run inference again even if an identical "
              "_prompt + duration + model + constraints_ was generated before.",
     ))
@@ -1113,7 +1089,7 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
     gen.addParmTemplate(hou.StringParmTemplate(
         "status", "Status", 1,
         default_value=("",),
-        disable_when=always_off,
+        is_hidden=True,
         help="Live job state: `Queued`, `Running (Ns)`, "
              "`Downloading`, `Done (Ns)`, `Done (cached)`, "
              "`Failed`, `Cancelled`.\nAlso shows the "
@@ -1122,8 +1098,19 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
     gen.addParmTemplate(hou.StringParmTemplate(
         "clip_info", "Clip", 1,
         default_value=("",),
-        disable_when=always_off,
+        is_hidden=True,
         help="Length of the last generated clip in samples and seconds.",
+    ))
+    gen.addParmTemplate(hou.LabelParmTemplate(
+        "status_label", "Status", column_labels=('`chs("status")`',),
+        help="Live job state: `Queued`, `Running (Ns)`, `Downloading`, `Done (Ns)`, "
+             "`Done (cached)`, `Failed`, `Cancelled`.\nAlso shows the "
+             "__Test Connection__ result, and the seam measurement after "
+             "__Regenerate From Here__.",
+    ))
+    gen.addParmTemplate(hou.LabelParmTemplate(
+        "clip_label", "Clip", column_labels=('`chs("clip_info")`',),
+        help="Length of the last generated clip in seconds, scene frames and samples.",
     ))
     ptg.append(gen)
 
