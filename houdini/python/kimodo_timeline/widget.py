@@ -31,8 +31,17 @@ TRACK_COLORS = {
     "RightHand": QtGui.QColor("#ff8a65"), "LeftFoot": QtGui.QColor("#7ed491"),
     "RightFoot": QtGui.QColor("#d98cf0"),
 }
+def text_on(bg):
+    """Black or white body text, whichever stays readable on this block colour.
+    The amber and green segment colours are too light to carry white text."""
+    lum = 0.299 * bg.redF() + 0.587 * bg.greenF() + 0.114 * bg.blueF()
+    if lum > 0.55:
+        return QtGui.QColor(18, 18, 18), QtGui.QColor(18, 18, 18, 195)
+    return QtGui.QColor(255, 255, 255), QtGui.QColor(255, 255, 255, 200)
+
+
 BG = QtGui.QColor("#2b2b2b"); ROW_BG = QtGui.QColor("#333333"); GRID = QtGui.QColor("#454545")
-TEXT = QtGui.QColor("#e6e6e6"); DIM = QtGui.QColor("#9a9a9a"); PLAYHEAD = QtGui.QColor("#ff5252")
+TEXT = QtGui.QColor("#e6e6e6"); DIM = QtGui.QColor("#9a9a9a"); PLAYHEAD = QtGui.QColor("#ff5252"); HIPMARK = QtGui.QColor("#6f7a8a")
 WHITE = QtGui.QColor("#ffffff"); OUTSIDE = QtGui.QColor(0, 0, 0, 60)
 
 
@@ -101,12 +110,15 @@ class Canvas(QtWidgets.QWidget):
         self.tl = Timeline()
         self.start = 1
         self.playhead = 1
+        self.hip_range = (1, 1)   # Houdini's playbar range, drawn as bounds
         # view state: frame at the left edge of the work zone and pixels per frame
         self._view_start = 0.0
         self._ppf = 10.0
         self._fitted = False
         # interaction state
         self._mode = None                 # None | "resize" | "move" | "key" | "scrub" | "pan"
+        self._hover = -1                  # segment under the cursor, -1 for none
+        self._base_tip = None             # the controls hint, restored when not over a segment
         self._idx = -1                    # segment index being edited
         self._track = None                # track name for key drags
         self._key = None                  # current key frame for key drags
@@ -180,7 +192,7 @@ class Canvas(QtWidgets.QWidget):
         out = []
         for i, st in enumerate(self.tl.starts(self.start)):
             x0, x1 = self.x_of(st), self.x_of(st + self.tl.segments[i].frames)
-            out.append(QtCore.QRectF(x0, RULER_H + 4, x1 - x0, PROMPT_H - 8))
+            out.append(QtCore.QRectF(x0, RULER_H, x1 - x0, PROMPT_H))
         return out
 
     def _seg_at(self, pos):
@@ -217,24 +229,40 @@ class Canvas(QtWidgets.QWidget):
 
         p.setClipRect(work)
 
-        # outside-the-clip shading (before Start Frame)
+        # outside-the-clip shading, both ends
         x_start = self.x_of(self.start)
         if x_start > GUTTER:
             p.fillRect(QtCore.QRectF(GUTTER, RULER_H, x_start - GUTTER, h - RULER_H), OUTSIDE)
+        x_end = self.x_of(self.start + self.tl.total_frames)
+        if x_end < w - PAD_R:
+            p.fillRect(QtCore.QRectF(x_end, RULER_H, (w - PAD_R) - x_end, h - RULER_H), OUTSIDE)
 
         # ruler + grid: tick every N frames so labels stay >= 48 px apart
         step = 1200
         for cand in (1, 2, 5, 10, 12, 24, 25, 30, 48, 50, 60, 100, 120, 240, 300, 600):
             if cand * self._ppf >= 48:
                 step = cand; break
+        fm = p.fontMetrics()
+        ph_x = self.x_of(self.playhead)
+        ph_w = max(30.0, fm.horizontalAdvance(str(self.playhead)) + 14)
+        ph_badge = QtCore.QRectF(ph_x - ph_w / 2, 2, ph_w, RULER_H - 6)
         f0 = self.frame_at(GUTTER); f1 = self.frame_at(w - PAD_R)
         f = f0 - (f0 % step)
         while f <= f1:
             x = self.x_of(f)
             p.setPen(GRID); p.drawLine(QtCore.QPointF(x, RULER_H), QtCore.QPointF(x, h))
-            p.setPen(TEXT); p.drawText(QtCore.QPointF(x + 3, RULER_H - 7), str(f))
+            lab = str(f)
+            # a tick label peeking out from behind the playhead badge reads as a second number
+            if not QtCore.QRectF(x + 3, 0, fm.horizontalAdvance(lab), RULER_H).intersects(ph_badge):
+                p.setPen(TEXT); p.drawText(QtCore.QPointF(x + 3, RULER_H - 7), lab)
             f += step
 
+        # HIP playbar bounds, so the scene range is readable against the clip
+        for hf in self.hip_range:
+            hx = self.x_of(hf)
+            if GUTTER <= hx <= w - PAD_R:
+                p.setPen(QtGui.QPen(HIPMARK, 1, QtCore.Qt.DashLine))
+                p.drawLine(QtCore.QPointF(hx, RULER_H), QtCore.QPointF(hx, h))
         p.setPen(QtGui.QPen(QtGui.QColor(90, 90, 90), 1))
         p.drawLine(QtCore.QPointF(GUTTER, RULER_H - 0.5), QtCore.QPointF(w - PAD_R, RULER_H - 0.5))
 
@@ -244,24 +272,26 @@ class Canvas(QtWidgets.QWidget):
             col = SEG_COLORS[i % len(SEG_COLORS)]
             if self._mode == "move" and i == self._idx:
                 col = QtGui.QColor(col); col.setAlpha(110)
+            elif i == self._hover and self._mode is None:
+                col = col.lighter(122)
             rr = r.adjusted(1, 0, -1, 0)
-            grad = QtGui.QLinearGradient(rr.topLeft(), rr.bottomLeft())
-            grad.setColorAt(0.0, col.lighter(116))
-            grad.setColorAt(1.0, col.darker(114))
-            p.setPen(QtCore.Qt.NoPen); p.setBrush(QtGui.QBrush(grad))
+            p.setPen(QtCore.Qt.NoPen); p.setBrush(col)
             p.drawRoundedRect(rr, 5, 5)
-            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 38), 1)); p.setBrush(QtCore.Qt.NoBrush)
+            # edge colour follows the contrast rule, so it stays visible on light blocks
+            edge = QtGui.QColor(text_on(col)[0]); edge.setAlpha(55)
+            p.setPen(QtGui.QPen(edge, 1)); p.setBrush(QtCore.Qt.NoBrush)
             p.drawRoundedRect(rr.adjusted(0.5, 0.5, -0.5, -0.5), 5, 5)
             seg = self.tl.segments[i]
             secs = seg.frames / bridge.fps()
             txt = QtCore.QRectF(r.left() + 6, r.top() + 2, max(0, r.width() - 12), r.height() - 4)
             if txt.width() > 24:
-                p.setPen(WHITE)
+                fg, fg_dim = text_on(col)
+                p.setPen(fg)
                 p.drawText(txt, QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop | QtCore.Qt.TextSingleLine,
                            p.fontMetrics().elidedText(seg.prompt or "(empty prompt)", QtCore.Qt.ElideRight, int(txt.width())))
-                p.setPen(QtGui.QColor(255, 255, 255, 170))
+                p.setPen(fg_dim)
                 p.drawText(txt, QtCore.Qt.AlignLeft | QtCore.Qt.AlignBottom, f"{seg.frames} f \u00b7 {secs:.2f} s")
-            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 120), 2))
+            p.setPen(QtGui.QPen(text_on(col)[0], 2))
             gx = r.right() - 3
             p.drawLine(QtCore.QPointF(gx, r.top() + 8), QtCore.QPointF(gx, r.bottom() - 8))
         if not rects:
@@ -291,12 +321,16 @@ class Canvas(QtWidgets.QWidget):
                 path.moveTo(x, y - KEY_R); path.lineTo(x + KEY_R, y); path.lineTo(x, y + KEY_R); path.lineTo(x - KEY_R, y); path.closeSubpath()
                 p.setPen(QtGui.QPen(QtGui.QColor("#111111"), 1)); p.setBrush(col); p.drawPath(path)
 
-        # playhead
+        # playhead. Blocks and shading treat a frame as the cell [f, f+1), so the current
+        # frame is filled across its whole cell; the line alone marked only its left edge,
+        # which made the end-of-clip shading look a frame late.
         x = self.x_of(self.playhead)
+        x_next = self.x_of(self.playhead + 1)
+        p.fillRect(QtCore.QRectF(x, RULER_H, x_next - x, h - RULER_H), QtGui.QColor(255, 82, 82, 38))
         p.setPen(QtGui.QPen(PLAYHEAD, 2)); p.drawLine(QtCore.QPointF(x, 0), QtCore.QPointF(x, h))
         p.setBrush(PLAYHEAD); p.setPen(QtCore.Qt.NoPen)
-        p.drawRoundedRect(QtCore.QRectF(x - 15, 2, 30, RULER_H - 6), 3, 3)
-        p.setPen(WHITE); p.drawText(QtCore.QRectF(x - 15, 2, 30, RULER_H - 6), QtCore.Qt.AlignCenter, str(self.playhead))
+        p.drawRoundedRect(ph_badge, 3, 3)
+        p.setPen(WHITE); p.drawText(ph_badge, QtCore.Qt.AlignCenter, str(self.playhead))
         p.end()
 
     # -- mouse ----------------------------------------------------------------
@@ -344,16 +378,45 @@ class Canvas(QtWidgets.QWidget):
             new = max(self.start, min(self.frame_at(pos.x()), self.start + self.tl.total_frames - 1))
             self._key = self.tl.move_key(self._track, self._key, new)
             self.update(); return
-        # hover cursor
+        # hover: cursor, block highlight, and the full prompt in a tooltip
         row, track = self._row_of(pos.y())
         cur = QtCore.Qt.ArrowCursor
+        hover = -1
         if row == "prompt":
             i, r = self._seg_at(pos)
             if i >= 0:
+                hover = i
                 cur = QtCore.Qt.SizeHorCursor if pos.x() >= r.right() - EDGE_GRAB - 2 else QtCore.Qt.OpenHandCursor
         elif row == "track" and self._key_at(track, pos.x()) is not None:
             cur = QtCore.Qt.SizeHorCursor
         self.setCursor(cur)
+        if hover != self._hover:
+            self._hover = hover
+            self._set_tip(self._seg_tip(hover) if hover >= 0 else None)
+            self.update()
+
+    def leaveEvent(self, ev):
+        if self._hover != -1:
+            self._hover = -1
+            self._set_tip(None)
+            self.update()
+        super().leaveEvent(ev)
+
+    def _set_tip(self, text):
+        """Segment tooltip while hovering one, the controls hint otherwise."""
+        if self._base_tip is None:
+            self._base_tip = self.toolTip()
+        self.setToolTip(text or self._base_tip)
+
+    def _seg_tip(self, i):
+        """The whole prompt, which the block itself has to elide."""
+        seg = self.tl.segments[i]
+        st = self.tl.starts(self.start)[i]
+        safe = (seg.prompt or "(empty prompt)").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return (f"<b>Segment {i + 1} of {len(self.tl.segments)}</b>"
+                f"<br>frames {st}-{st + seg.frames - 1}"
+                f" &nbsp;({seg.frames} f, {seg.frames / bridge.fps():.2f} s)"
+                f"<br><br>{safe}")
 
     def mouseReleaseEvent(self, ev):
         mode, self._mode = self._mode, None
@@ -555,7 +618,23 @@ class TimelineWidget(QtWidgets.QWidget):
 
         self._timer = QtCore.QTimer(self); self._timer.setInterval(400)
         self._timer.timeout.connect(self._tick); self._timer.start()
+        # The 400 ms tick is too coarse to follow playback, and running the whole tick at
+        # frame rate would be wasteful. A second timer moves only the playhead.
+        self._play_timer = QtCore.QTimer(self); self._play_timer.setInterval(33)
+        self._play_timer.timeout.connect(self._sync_playhead); self._play_timer.start()
         self._tick()
+
+    def _sync_playhead(self):
+        """Follow the Houdini frame at ~30 fps. One HOM call, repaint only on a change."""
+        if self.node is None:
+            return
+        try:
+            f = bridge.current_frame()
+        except Exception:
+            return
+        if f != self.canvas.playhead:
+            self.canvas.playhead = f
+            self.canvas.update()
 
     # -- binding --------------------------------------------------------------
     def _sync_combo(self):
@@ -603,8 +682,10 @@ class TimelineWidget(QtWidgets.QWidget):
             self.status_label.setText(""); return
         self.canvas.playhead = bridge.current_frame()
         new_start = bridge.start_frame(self.node)
-        if new_start != self.canvas.start:      # Start Frame moved on the node
-            self.canvas.start = new_start
+        new_hip = bridge.hip_frame_range()
+        if new_start != self.canvas.start or new_hip != self.canvas.hip_range:
+            self.canvas.start = new_start       # Start Frame or the HIP range moved
+            self.canvas.hip_range = new_hip
             self._refresh_total()
         self.canvas.update()
         self.status_label.setText(bridge.status(self.node))
@@ -638,9 +719,14 @@ class TimelineWidget(QtWidgets.QWidget):
         tl = self.canvas.tl
         first = self.canvas.start
         last = first + tl.total_frames - 1 if tl.total_frames else first
+        h0, h1 = self.canvas.hip_range
+        fits = h0 <= first and h1 >= last
+        hip = (f"HIP <b>{h0}</b>-<b>{h1}</b>" if fits else
+               f"<span style='color:#e0a030'>HIP <b>{h0}</b>-<b>{h1}</b>, clip does not fit</span>")
         self.total_label.setText(
-            f"Frames <b>{first}</b>–<b>{last}</b>   {tl.total_frames} f \u00b7 "
-            f"{tl.total_frames / bridge.fps():.2f} s \u00b7 {len(tl.segments)} segment(s)")
+            f"Clip <b>{first}</b>-<b>{last}</b>   {tl.total_frames} f \u00b7 "
+            f"{tl.total_frames / bridge.fps():.2f} s \u00b7 {len(tl.segments)} segment(s)"
+            f"     <span style='color:#9a9a9a'>{hip}</span>")
 
     def _write(self, label="Kimodo timeline edit"):
         if self.node is None:

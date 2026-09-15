@@ -78,6 +78,12 @@ def fps() -> float:
     return float(hou.fps())
 
 
+def hip_frame_range() -> tuple[int, int]:
+    """The HIP file's playbar range (global start/end)."""
+    a, b = hou.playbar.frameRange()
+    return int(round(a)), int(round(b))
+
+
 def current_frame() -> int:
     return int(round(hou.frame()))
 
