@@ -57,6 +57,11 @@ def save(node, tl: Timeline, label: str = "Kimodo timeline edit") -> None:
         if tl.segments:
             node.parm("duration_frames").set(tl.total_frames)
         node.parm("pose_keyframes").set(" ".join(str(k) for k in tl.tracks.get("fullbody", [])))
+        # keep the node's Segments multiparm showing the same thing
+        try:
+            node.type().hdaModule().rebuild_segments(node)
+        except Exception:
+            pass          # older HDA build without the multiparm
 
 
 def detach(node) -> None:

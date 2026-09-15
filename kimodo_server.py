@@ -62,6 +62,29 @@ def _ensure_model(name: str):
     return model
 
 
+def _build_initial_motion(cf, model):
+    """Motion features for `continue_from`, so the first segment continues rather than starts.
+
+    The NPZ carries 77-joint local rotations; the model works on its own smaller skeleton,
+    and `from_SOMASkeleton77` is the exact inverse of the conversion used on output, so the
+    round-trip is lossless. Root positions are skeleton independent.
+    """
+    if not cf:
+        return None
+    import torch
+    skeleton = model.skeleton
+    device = skeleton.device
+    lr = torch.tensor(cf["local_rot_mats"], dtype=torch.float32, device=device)
+    rp = torch.tensor(cf["root_positions"], dtype=torch.float32, device=device)
+    if lr.ndim != 4 or rp.ndim != 2 or lr.shape[0] != rp.shape[0]:
+        raise ValueError("continue_from needs local_rot_mats [n,J,3,3] and root_positions [n,3]")
+    if lr.shape[1] != skeleton.nbjoints:
+        lr = skeleton.from_SOMASkeleton77(lr)
+    feats = model.motion_rep(lr[None], rp[None], to_normalize=False)
+    log.info("[CONT] seeding %d frames of motion", feats.shape[1])
+    return feats
+
+
 def _build_constraints(constraints, model) -> list:
     """Turn the request's constraint dicts into Kimodo constraint objects.
 
@@ -141,6 +164,7 @@ def _infer_resident(req: "GenerateRequest", out_path: pathlib.Path, job: Optiona
     texts, durations = req.texts_and_durations()
     num_frames = [max(1, int(d * model.fps)) for d in durations]
     constraint_lst = _build_constraints(req.constraints, model)
+    initial_motion = _build_initial_motion(req.continue_from, model)
     progress = _Progress(job if job is not None else {}, expected_loops=len(texts))
     # Kimodo's multi-prompt path does not forward `progress_bar` to the sampling loop
     # (kimodo_model._multiprompt calls self._generate without it), so inject it there.
@@ -160,6 +184,7 @@ def _infer_resident(req: "GenerateRequest", out_path: pathlib.Path, job: Optiona
             num_samples=1,
             multi_prompt=True,
             num_transition_frames=max(1, int(req.transition_frames)),
+            initial_motion=initial_motion,
             post_processing=True,
             constraint_lst=constraint_lst,
             return_numpy=True,
@@ -192,6 +217,11 @@ class GenerateRequest(BaseModel):
     model: str = "soma-rp"
     num_samples: int = 1
     force: bool = False          # bypass the cache and re-run inference
+    # Continue an existing clip instead of starting fresh. Carries the tail of a clip
+    # you already have as {"local_rot_mats": [n,77,3,3], "root_positions": [n,3]}; the
+    # first requested segment then takes Kimodo's transition path and joins onto it,
+    # and the returned NPZ is the new tail only (its first frames are the blended seam).
+    continue_from: Optional[dict] = None
     constraints: Optional[list] = None   # Kimodo constraint dicts (type/frame_indices/...)
     # Multi-prompt timeline: ordered segments [{"prompt": str, "duration": seconds}, ...].
     # When given, `prompt`/`duration` are ignored and Kimodo blends consecutive segments
@@ -230,6 +260,8 @@ def _cache_key(req: "GenerateRequest") -> str:
     timeline existed; segment requests add their own fields."""
     payload = {"prompt": req.prompt, "duration": req.duration, "model": req.model,
                "constraints": req.constraints}
+    if req.continue_from:
+        payload["continue_from"] = req.continue_from
     if req.segments:
         payload["segments"] = req.segments
         payload["transition_frames"] = req.transition_frames
