@@ -58,7 +58,7 @@ in the network editor.
 | Duration (frames) | `72` | Clip length in scene frames at the current FPS; converted to seconds for Kimodo (30 fps). With Retime on you get back exactly this many frames. |
 | Model | `Kimodo-SOMA-RP-v1.1` | Kimodo checkpoint. `RP` conditions on a rest pose; `SEED` uses a fixed seed for reproducibility. |
 | **Generate** / **Cancel** | — | Submit the prompt and return at once; a background thread polls, downloads the NPZ and recooks the node. Cancel stops a queued job or discards the result. |
-| Force Regenerate | `off` | Bypass the server cache (keyed on prompt + duration + model + constraints). |
+| Force Regenerate | `on` | Bypass the server cache (keyed on prompt + duration + model + constraints). |
 | Status | _(read-only)_ | `Queued`, `Running 42% (Ns)`, `Downloading...`, `Done (Ns)`, `Done (cached)`, `Error: …`, `Cancelled`, or the Test Connection result. The percentage is the server's denoising progress across segments, with the phase (`encoding text`, `denoising segment k/N`, `post-processing`); the Timeline panel draws it as a bar. Text encoding runs on the CPU and takes ~30 s per segment before any denoising happens, so expect the bar to sit at 0% for a while on the first segment. Failures also mark the node with an error. |
 | Clip | _(read-only)_ | Length of the last clip in seconds, scene frames and Kimodo samples. |
 
@@ -148,8 +148,8 @@ cues.
 node. It edits a hidden `timeline_json` parm: ordered prompt segments (scene frames each), a
 transition length (clip samples blended at each boundary), and pose tracks (Full Body, L/R Hand,
 L/R Foot) holding scene frames at which the posed skeleton on input 1 is sampled. While a
-timeline exists it owns Duration, Pose Keyframes and Pose Constraint; **Detach timeline** in the
-panel hands them back. Every edit is one undo step. Details: [docs/timeline-design.md](../docs/timeline-design.md).
+timeline exists it owns Duration, Pose Keyframes and Pose Constraint; deleting every
+segment hands them back. Every edit is one undo step. Details: [docs/timeline-design.md](../docs/timeline-design.md).
 
 | Where | Action | Result |
 |---|---|---|

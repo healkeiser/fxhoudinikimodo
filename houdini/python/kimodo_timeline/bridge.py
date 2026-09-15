@@ -31,10 +31,6 @@ def node_at(path):
     return n if n is not None and n.type().name().startswith(TYPE_PREFIX) else None
 
 
-def has_timeline(node) -> bool:
-    return bool(node.parm("timeline_json").eval().strip())
-
-
 def load(node) -> Timeline:
     """The node's timeline, seeded from Prompt/Duration/Pose Keyframes if it has none yet."""
     raw = node.parm("timeline_json").eval()
@@ -58,10 +54,7 @@ def save(node, tl: Timeline, label: str = "Kimodo timeline edit") -> None:
             node.parm("duration_frames").set(tl.total_frames)
         node.parm("pose_keyframes").set(" ".join(str(k) for k in tl.tracks.get("fullbody", [])))
         # keep the node's Segments multiparm showing the same thing
-        try:
-            node.type().hdaModule().rebuild_segments(node)
-        except Exception:
-            pass          # older HDA build without the multiparm
+        node.type().hdaModule().rebuild_segments(node)
 
 
 def start_frame(node) -> int:
@@ -95,9 +88,9 @@ def status(node) -> str:
 
 
 def progress(node) -> float | None:
-    """0..1 while a job is queued/running/downloading, else None."""
-    st = node.parm("status").eval()
-    if st.startswith(("Queued", "Running", "Downloading")):
+    """0..1 while a job is in flight, else None. Keyed on job_id, which Generate sets on
+    queue and clears on every exit, rather than on the wording of the Status text."""
+    if node.parm("job_id").eval():
         return float(node.parm("progress").eval())
     return None
 

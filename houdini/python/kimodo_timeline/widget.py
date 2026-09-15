@@ -8,6 +8,8 @@ View controls follow the usual DCC timeline conventions:
 """
 from __future__ import annotations
 
+import html
+
 import hou
 from PySide6 import QtCore, QtGui, QtWidgets
 
@@ -268,6 +270,7 @@ class Canvas(QtWidgets.QWidget):
         p.drawLine(QtCore.QPointF(GUTTER, RULER_H - 0.5), QtCore.QPointF(w - PAD_R, RULER_H - 0.5))
 
         # segments
+        fps = bridge.fps()
         rects = self._seg_rects()
         for i, r in enumerate(rects):
             col = SEG_COLORS[i % len(SEG_COLORS)]
@@ -275,24 +278,24 @@ class Canvas(QtWidgets.QWidget):
                 col = QtGui.QColor(col); col.setAlpha(110)
             elif i == self._hover and self._mode is None:
                 col = col.lighter(122)
+            fg, fg_dim = text_on(col)
             rr = r.adjusted(1, 0, -1, 0)
             p.setPen(QtCore.Qt.NoPen); p.setBrush(col)
             p.drawRoundedRect(rr, 5, 5)
             # edge colour follows the contrast rule, so it stays visible on light blocks
-            edge = QtGui.QColor(text_on(col)[0]); edge.setAlpha(55)
+            edge = QtGui.QColor(fg); edge.setAlpha(55)
             p.setPen(QtGui.QPen(edge, 1)); p.setBrush(QtCore.Qt.NoBrush)
             p.drawRoundedRect(rr.adjusted(0.5, 0.5, -0.5, -0.5), 5, 5)
             seg = self.tl.segments[i]
-            secs = seg.frames / bridge.fps()
+            secs = seg.frames / fps
             txt = QtCore.QRectF(r.left() + 6, r.top() + 2, max(0, r.width() - 12), r.height() - 4)
             if txt.width() > 24:
-                fg, fg_dim = text_on(col)
                 p.setPen(fg)
                 p.drawText(txt, QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop | QtCore.Qt.TextSingleLine,
-                           p.fontMetrics().elidedText(seg.prompt or "(empty prompt)", QtCore.Qt.ElideRight, int(txt.width())))
+                           fm.elidedText(seg.prompt or "(empty prompt)", QtCore.Qt.ElideRight, int(txt.width())))
                 p.setPen(fg_dim)
                 p.drawText(txt, QtCore.Qt.AlignLeft | QtCore.Qt.AlignBottom, f"{seg.frames} f \u00b7 {secs:.2f} s")
-            p.setPen(QtGui.QPen(text_on(col)[0], 2))
+            p.setPen(QtGui.QPen(fg, 2))
             gx = r.right() - 3
             p.drawLine(QtCore.QPointF(gx, r.top() + 8), QtCore.QPointF(gx, r.bottom() - 8))
         if not rects:
@@ -413,7 +416,7 @@ class Canvas(QtWidgets.QWidget):
         """The whole prompt, which the block itself has to elide."""
         seg = self.tl.segments[i]
         st = self.tl.starts(self.start)[i]
-        safe = (seg.prompt or "(empty prompt)").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        safe = html.escape(seg.prompt or "(empty prompt)")
         return (f"<b>Segment {i + 1} of {len(self.tl.segments)}</b>"
                 f"<br>frames {st}-{st + seg.frames - 1}"
                 f" &nbsp;({seg.frames} f, {seg.frames / bridge.fps():.2f} s)"
@@ -424,16 +427,21 @@ class Canvas(QtWidgets.QWidget):
         if mode == "pan":
             self.setCursor(QtCore.Qt.ArrowCursor)
         elif mode == "resize":
-            self.tl.clamp_keys(self.start); self.edited.emit("Kimodo timeline: resize segment")
+            self.tl.clamp_keys(self.start); self._commit("resize segment")
         elif mode == "move":
             drop = self._drop if self._drop is not None else self._idx
             if drop > self._idx:
                 drop -= 1                    # removing src shifts later indices left
             if drop != self._idx:
-                self.tl.move(self._idx, drop); self.edited.emit("Kimodo timeline: reorder segments")
+                self.tl.move(self._idx, drop); self._commit("reorder segments")
             self._drop = None
         elif mode == "key":
-            self.edited.emit("Kimodo timeline: move key")
+            self._commit("move key")
+        self.update()
+
+    def _commit(self, verb):
+        """One model edit written to the node, as one undo step."""
+        self.edited.emit("Kimodo timeline: " + verb)
         self.update()
 
     def mouseDoubleClickEvent(self, ev):
@@ -466,9 +474,9 @@ class Canvas(QtWidgets.QWidget):
                 menu.addAction("Add segment after", lambda: self.add_segment(after=i))
                 menu.addAction("Split at playhead", lambda: self.split_at(i, self.playhead))
                 menu.addSeparator()
-                one = menu.addAction("Regenerate this sequence…",
+                one = menu.addAction("Regenerate this sequence\u2026",
                                      lambda: self.regenRequested.emit(i, False))
-                rest = menu.addAction("Regenerate from here to the end…",
+                rest = menu.addAction("Regenerate from here to the end\u2026",
                                       lambda: self.regenRequested.emit(i, True))
                 for act in (one, rest):
                     act.setEnabled(i > 0)
@@ -512,14 +520,14 @@ class Canvas(QtWidgets.QWidget):
             self.tl.set_prompt(i, dlg.text())
             if dlg.frames() != seg.frames:
                 self.tl.resize(i, dlg.frames()); self.tl.clamp_keys(self.start)
-            self.edited.emit("Kimodo timeline: edit segment"); self.update()
+            self._commit("edit segment")
 
     def add_segment(self, after=None):
         default = self.tl.segments[after].frames if after is not None and self.tl.segments else int(round(3 * bridge.fps()))
         dlg = PromptDialog("", default, self)
         if dlg.exec() == QtWidgets.QDialog.Accepted:
             self.tl.add(dlg.text(), dlg.frames(), after=after)
-            self.edited.emit("Kimodo timeline: add segment"); self.update()
+            self._commit("add segment")
 
     def split_at(self, i, frame):
         st = self.tl.starts(self.start)[i]
@@ -528,22 +536,22 @@ class Canvas(QtWidgets.QWidget):
         if 0 < left < seg.frames:
             right = seg.frames - left
             self.tl.resize(i, left); self.tl.add(seg.prompt, right, after=i)
-            self.edited.emit("Kimodo timeline: split segment"); self.update()
+            self._commit("split segment")
 
     def remove_segment(self, i):
         self.tl.remove(i); self.tl.clamp_keys(self.start)
-        self.edited.emit("Kimodo timeline: delete segment"); self.update()
+        self._commit("delete segment")
 
     def add_key(self, track, frame):
         end = self.start + self.tl.total_frames - 1
         self.tl.add_key(track, max(self.start, min(frame, end)))
-        self.edited.emit("Kimodo timeline: add key"); self.update()
+        self._commit("add key")
 
     def remove_key(self, track, frame):
-        self.tl.remove_key(track, frame); self.edited.emit("Kimodo timeline: delete key"); self.update()
+        self.tl.remove_key(track, frame); self._commit("delete key")
 
     def clear_track(self, track):
-        self.tl.tracks[track] = []; self.edited.emit("Kimodo timeline: clear track"); self.update()
+        self.tl.tracks[track] = []; self._commit("clear track")
 
 
 class TimelineWidget(QtWidgets.QWidget):
@@ -583,6 +591,7 @@ class TimelineWidget(QtWidgets.QWidget):
         self.transition = QtWidgets.QSpinBox(); self.transition.setRange(1, 60); self.transition.setSuffix(" samples")
         self.transition.setToolTip("Kimodo blends consecutive segments over this many clip samples (30 fps) at each boundary.")
         self.transition.valueChanged.connect(self._transition_changed)
+        self.transition.editingFinished.connect(lambda: self._write("Kimodo timeline: transition"))
         foot.addWidget(self.transition)
         foot.addSpacing(16)
         self.total_label = QtWidgets.QLabel("")
@@ -634,7 +643,7 @@ class TimelineWidget(QtWidgets.QWidget):
 
     def _sync_playhead(self):
         """Follow the Houdini frame at ~30 fps. One HOM call, repaint only on a change."""
-        if self.node is None:
+        if self.node is None or not self.isVisible():
             return
         try:
             f = bridge.current_frame()
@@ -662,6 +671,8 @@ class TimelineWidget(QtWidgets.QWidget):
             self._load(node)
 
     def _tick(self):
+        if not self.isVisible():      # hidden pane tab: nothing to poll for
+            return
         try:
             self._sync_combo()
             # Only a *new* network-editor selection switches the panel, so a pick made
@@ -680,7 +691,7 @@ class TimelineWidget(QtWidgets.QWidget):
                 raw = self.node.parm("timeline_json").eval()
                 if raw != self._last_json:    # external change (undo, manual parm edit)
                     self._load(self.node, keep_view=True)
-        except Exception:
+        except hou.ObjectWasDeleted:
             self.node = None
         enabled = self.node is not None
         for w in (self.canvas, self.transition, self.gen_btn, self.cancel_btn, self.fit_btn, self.key_btn, self.key_track):
@@ -688,15 +699,15 @@ class TimelineWidget(QtWidgets.QWidget):
         if not enabled:
             self.warn_label.setText("")
             self.status_label.setText(""); return
-        self.canvas.playhead = bridge.current_frame()
         new_start = bridge.start_frame(self.node)
         new_hip = bridge.hip_frame_range()
         if new_start != self.canvas.start or new_hip != self.canvas.hip_range:
             self.canvas.start = new_start       # Start Frame or the HIP range moved
             self.canvas.hip_range = new_hip
             self._refresh_total()
-        self.canvas.update()
-        self.status_label.setText(bridge.status(self.node))
+            self.canvas.update()
+        st = bridge.status(self.node)
+        self.status_label.setText(st)
         prog = bridge.progress(self.node)
         self.progress.setVisible(prog is not None)
         if prog is not None:
@@ -707,7 +718,7 @@ class TimelineWidget(QtWidgets.QWidget):
             self.node_combo.setCurrentIndex(i)
             self.node_combo.blockSignals(False)
         # Pose keys need a posed rig on input 1; say so before Generate has to refuse.
-        has_keys = any(self.canvas.tl.tracks.get(t) for t in self.canvas.tl.tracks)
+        has_keys = any(self.canvas.tl.tracks.values())
         self.warn_label.setText(
             "\u26a0 pose keys need a posed skeleton on input 1 (Create Pose Rig)"
             if has_keys and self.node.input(1) is None else "")
@@ -719,7 +730,9 @@ class TimelineWidget(QtWidgets.QWidget):
         self._last_json = node.parm("timeline_json").eval()
         self.transition.blockSignals(True); self.transition.setValue(self.canvas.tl.transition_frames); self.transition.blockSignals(False)
         self._refresh_total()
-        if not keep_view:
+        if keep_view:
+            self.canvas.update()
+        else:
             self.canvas.fit()
 
     def _refresh_total(self):
@@ -743,7 +756,7 @@ class TimelineWidget(QtWidgets.QWidget):
         self._refresh_total()
 
     def _transition_changed(self, v):
-        self.canvas.tl.transition_frames = int(v); self._write("Kimodo timeline: transition")
+        self.canvas.tl.transition_frames = int(v)
         self.canvas.update()
 
     def _regen(self, index, to_end=False):

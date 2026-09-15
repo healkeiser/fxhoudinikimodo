@@ -220,7 +220,6 @@ class GenerateRequest(BaseModel):
     prompt: str = ""
     duration: float = 3.0
     model: str = "soma-rp"
-    num_samples: int = 1
     force: bool = False          # bypass the cache and re-run inference
     # Continue an existing clip instead of starting fresh. Carries the tail of a clip
     # you already have as {"local_rot_mats": [n,77,3,3], "root_positions": [n,3]}; the
@@ -322,6 +321,26 @@ async def generate(req: GenerateRequest) -> JobStatus:
 _ENCODE_EST_S = 30.0
 
 
+def _elapsed(job: dict) -> float:
+    """Seconds since the job was queued, to 0.1 s."""
+    return round(_time.monotonic() - job.get("started_at", _time.monotonic()), 1)
+
+
+def _cancelled(job: dict) -> bool:
+    """True once a cancel has landed, stamping the elapsed time on the way out."""
+    if job.get("status") != "cancelled":
+        return False
+    job["elapsed"] = _elapsed(job)
+    return True
+
+
+def _clip_shape(path) -> tuple[int, int]:
+    """(samples, joints) of a generated NPZ."""
+    with np.load(path) as z:
+        t, j = z["posed_joints"].shape[:2]
+    return int(t), int(j)
+
+
 def _display_progress(job: dict) -> Optional[float]:
     prog, phase = job.get("progress"), job.get("phase")
     if prog is None or not phase or phase.startswith("denoising"):
@@ -338,7 +357,7 @@ def job_status(job_id: str) -> JobStatus:
     job = _jobs[job_id]
     elapsed = job.get("elapsed")
     if elapsed is None and "started_at" in job:
-        elapsed = _time.monotonic() - job["started_at"]
+        elapsed = _elapsed(job)
     return JobStatus(
         job_id=job_id,
         status=job["status"],
@@ -347,7 +366,7 @@ def job_status(job_id: str) -> JobStatus:
         frames=job.get("frames"),
         joints=job.get("joints"),
         error=job.get("error"),
-        elapsed=round(elapsed, 1) if elapsed is not None else None,
+        elapsed=elapsed,
         cached=job.get("cached"),
         progress=_display_progress(job),
         phase=job.get("phase"),
@@ -364,15 +383,14 @@ async def cancel_job(job_id: str) -> JobStatus:
     # In-process inference can't be hard-interrupted: mark cancelled so a queued
     # job is skipped and a finished result is discarded.
     job["status"] = "cancelled"
-    job["elapsed"] = round(_time.monotonic() - job.get("started_at", _time.monotonic()), 1)
+    job["elapsed"] = _elapsed(job)
     log.info("[CANCEL] %s", job_id[:8])
     return job_status(job_id)
 
 
 async def _run_job(job_id: str, req: GenerateRequest) -> None:
     job = _jobs[job_id]
-    if job.get("status") == "cancelled":  # cancelled while still queued
-        job["elapsed"] = round(_time.monotonic() - job["started_at"], 1)
+    if _cancelled(job):                   # cancelled while still queued
         return
     job["status"] = "running"
     job["progress"] = 0.0
@@ -383,45 +401,40 @@ async def _run_job(job_id: str, req: GenerateRequest) -> None:
                 job.update(status="failed", error=f"dev_reference.npz not found at {DEV_REFERENCE}")
                 return
             log.info("[MOCK] %s \u2192 %s", job_id[:8], DEV_REFERENCE)
-            data = np.load(DEV_REFERENCE)
-            T, J = data["posed_joints"].shape[:2]
+            T, J = _clip_shape(DEV_REFERENCE)
             job.update(status="done", npz_path=str(DEV_REFERENCE), frames=T, joints=J,
-                       elapsed=round(_time.monotonic() - job["started_at"], 1))
+                       elapsed=_elapsed(job))
             return
 
         out_path = OUTPUT_DIR / f"{_cache_key(req)}.npz"
 
         if not req.force and out_path.exists():
-            data = np.load(out_path)
-            T, J = data["posed_joints"].shape[:2]
+            T, J = _clip_shape(out_path)
             log.info("[CACHE] %s \u2192 %s", job_id[:8], out_path.name)
             job.update(status="done", npz_path=str(out_path), frames=T, joints=J,
-                       cached=True, elapsed=round(_time.monotonic() - job["started_at"], 1))
+                       cached=True, elapsed=_elapsed(job))
             return
 
         # In-process inference, serialised on the single GPU. Cannot be hard-
         # cancelled mid-run; a cancel marks the job and the result is discarded.
         async with _model_lock:
-            if job.get("status") == "cancelled":
-                job["elapsed"] = round(_time.monotonic() - job["started_at"], 1)
+            if _cancelled(job):
                 return
             log.info("[GEN] %s prompt=%r", job_id[:8], _describe(req))
             await asyncio.to_thread(_infer_resident, req, out_path, job)
-        if job.get("status") == "cancelled":  # cancelled while inference ran
-            job["elapsed"] = round(_time.monotonic() - job["started_at"], 1)
+        if _cancelled(job):                   # cancelled while inference ran
             return
 
-        elapsed = round(_time.monotonic() - job["started_at"], 1)
+        elapsed = _elapsed(job)
         if not out_path.exists():
             job.update(status="failed", error="Output file not found after inference.", elapsed=elapsed)
             return
 
-        data = np.load(out_path)
-        T, J = data["posed_joints"].shape[:2]
+        T, J = _clip_shape(out_path)
         out_path.with_suffix(".json").write_text(json.dumps({
             "prompt": _describe(req), "duration": req.duration, "model": req.model,
             "segments": req.segments, "transition_frames": req.transition_frames,
-            "frames": int(T), "joints": int(J), "created": _time.time(),
+            "frames": T, "joints": J, "created": _time.time(),
         }, indent=2))
         log.info("[DONE] %s \u2014 %d frames, %d joints, %.1fs", job_id[:8], T, J, elapsed)
         job.update(status="done", npz_path=str(out_path), frames=T, joints=J,
@@ -429,5 +442,4 @@ async def _run_job(job_id: str, req: GenerateRequest) -> None:
     except Exception as exc:  # never leave a job stuck in "running"
         if job.get("status") != "cancelled":
             log.exception("[FAIL] %s", job_id[:8])
-            job.update(status="failed", error=str(exc)[-500:],
-                       elapsed=round(_time.monotonic() - job["started_at"], 1))
+            job.update(status="failed", error=str(exc)[-500:], elapsed=_elapsed(job))

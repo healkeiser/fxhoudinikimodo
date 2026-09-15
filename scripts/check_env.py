@@ -25,7 +25,6 @@ def check(label, ok, detail=""):
 
 def ram_gb():
     try:
-        import os
         if sys.platform == "win32":
             import ctypes
 

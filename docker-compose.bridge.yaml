@@ -8,32 +8,44 @@
 # Usage (on the GPU host, from the kimodo dir):
 #   MOCK_MODE=0 docker compose -f docker-compose.bridge.yaml up text-encoder -d  # wait until healthy
 #   MOCK_MODE=0 docker compose -f docker-compose.bridge.yaml up api -d
+# Shared between both services, so the HF cache mount and the GPU reservation cannot
+# drift apart (a second copy of the weights is a 10 GB mistake).
+x-workspace: &workspace
+  - ./:/workspace
+  - ${HF_HOME:-${HOME}/.cache/huggingface}:/workspace/.cache/huggingface
+
+x-hf-env: &hf-env
+  # TEXT_ENCODERS_DIR: the local McGill adapters, base repointed to the ungated
+  # NousResearch mirror.
+  TEXT_ENCODERS_DIR: /workspace/text_encoders
+  HF_HOME: /workspace/.cache/huggingface
+  HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN}
+
+x-gpu: &gpu
+  resources:
+    reservations:
+      devices:
+        - driver: nvidia
+          count: 1
+          capabilities: [gpu]
+
 services:
   text-encoder:
     image: kimodo:1.0
     container_name: text-encoder
     working_dir: /workspace
     command: python -m kimodo.scripts.run_text_encoder_server
-    volumes:
-      - ./:/workspace
-      - ${HF_HOME:-${HOME}/.cache/huggingface}:/workspace/.cache/huggingface
+    volumes: *workspace
     ports:
       - "9550:9550"
     environment:
+      <<: *hf-env
       # cpu keeps VRAM free (the encoder is the bulk of Kimodo's GPU footprint) at the
       # cost of ~14 GB of host RAM and ~30 s of encoding per sequence. cuda is much
       # faster but wants roughly 14 GB of VRAM on top of the motion model.
-      - TEXT_ENCODER_DEVICE=${TEXT_ENCODER_DEVICE:-cpu}
-      - TEXT_ENCODERS_DIR=/workspace/text_encoders   # local McGill adapters, base repointed to the ungated NousResearch mirror
-      - HF_HOME=/workspace/.cache/huggingface
-      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
+      TEXT_ENCODER_DEVICE: ${TEXT_ENCODER_DEVICE:-cpu}
     deploy:                     # needed for TEXT_ENCODER_DEVICE=cuda; harmless on cpu
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+      <<: *gpu
     healthcheck:
       # Hit /config (the gradio config endpoint kimodo's TextEncoderAPI fetches on
       # connect), not just / — otherwise "healthy" can race ahead of gradio being
@@ -48,32 +60,27 @@ services:
     container_name: kimodo-api
     working_dir: /workspace
     command: uvicorn kimodo_server:app --host 0.0.0.0 --port ${KIMODO_PORT:-8001}
-    volumes:
-      - ./:/workspace
-      - ${HF_HOME:-${HOME}/.cache/huggingface}:/workspace/.cache/huggingface
+    volumes: *workspace
     ports:
       - "${KIMODO_PORT:-8001}:${KIMODO_PORT:-8001}"
     environment:
-      - KIMODO_MODEL=${KIMODO_MODEL:-}   # model to preload at startup (blank = kimodo default)
-      - MOCK_MODE=${MOCK_MODE:-0}   # 0 = live inference; 1 = serve dev_reference.npz
-      - OUTPUT_DIR=/workspace/output
-      - TEXT_ENCODER_URL=http://text-encoder:9550/
-      - TEXT_ENCODERS_DIR=/workspace/text_encoders   # for the local-encoder fallback
-      - HF_HOME=/workspace/.cache/huggingface
-      - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
+      <<: *hf-env
+      KIMODO_MODEL: ${KIMODO_MODEL:-}   # model to preload at startup (blank = kimodo default)
+      MOCK_MODE: ${MOCK_MODE:-0}        # 0 = live inference; 1 = serve dev_reference.npz
+      OUTPUT_DIR: /workspace/output
+      TEXT_ENCODER_URL: "http://text-encoder:9550/"
+      # Seconds one segment spends encoding text, used only to make the progress bar
+      # creep during the phase the model reports nothing for. Measured CPU default;
+      # lower it (or ignore it) when the encoder runs on the GPU.
+      KIMODO_ENCODE_EST_S: ${KIMODO_ENCODE_EST_S:-30}
       # The model is preloaded at startup; load it from the local HF cache and
       # avoid the network so a flaky/stalling HF download can't hang startup.
       # The weights must already be cached (`huggingface-cli download
       # nvidia/Kimodo-SOMA-RP-v1.1`). Set HF_HUB_OFFLINE=0 for a one-time download.
-      - HF_HUB_OFFLINE=${HF_HUB_OFFLINE:-1}
-      - HF_HUB_DISABLE_XET=1   # the hf_xet downloader was observed to hang on this setup
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-1}
+      HF_HUB_DISABLE_XET: "1"   # the hf_xet downloader was observed to hang on this setup
     deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
+      <<: *gpu
     depends_on:
       text-encoder:
         condition: service_healthy

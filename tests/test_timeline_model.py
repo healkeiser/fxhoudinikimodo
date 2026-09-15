@@ -11,10 +11,8 @@ def test_totals_and_starts():
     tl = Timeline([Segment("walk", 72), Segment("box", 48)])
     assert tl.total_frames == 120
     assert tl.starts(1) == [1, 73]
-    assert tl.segment_at(1) == 0 and tl.segment_at(72) == 0 and tl.segment_at(73) == 1
-    assert tl.segment_at(121) is None
-    assert tl.seconds(24) == [3.0, 2.0]
-    assert tl.request_segments(30)[0]["duration"] == 2.4
+    assert tl.request_segments(30) == [{"prompt": "walk", "duration": 2.4},
+                                       {"prompt": "box", "duration": 1.6}]
 
 
 def test_resize_never_below_one_frame():

@@ -61,26 +61,30 @@ def splice(old, new, cut: int, n: int, resume_at=None) -> dict:
     """
     out = {}
     for k in CLIP_KEYS:
-        if k in old.files and k in new.files:
+        if k in old and k in new:
             parts = [old[k][:cut - n], new[k]]
             if resume_at is not None:
                 parts.append(old[k][resume_at:])
             out[k] = np.concatenate(parts, axis=0)
-    for k in old.files:                      # anything not per-sample rides along
+    for k in old:                            # anything not per-sample rides along
         if k not in out:
             out[k] = old[k]
     return out
 
 
-def seam_error(old, merged, at: int):
-    """Max joint movement across the join at sample `at`, and the source clip's own mean
-    per-sample movement for scale. Below 1.0x means the join moves less than the motion
-    around it, which is the point at which it stops reading as a cut.
-    """
+def seam_jump(merged, at: int) -> float:
+    """Max joint movement across the join at sample `at`."""
     pj = merged["posed_joints"]
-    jump = float(np.linalg.norm(pj[at] - pj[at - 1], axis=-1).max())
-    d = np.linalg.norm(np.diff(old["posed_joints"], axis=0), axis=-1).max(axis=1)
-    return jump, float(d.mean())
+    return float(np.linalg.norm(pj[at] - pj[at - 1], axis=-1).max())
+
+
+def mean_step(clip) -> float:
+    """The clip's own mean per-sample joint movement, the scale a seam is judged against.
+    Below 1.0x means the join moves less than the motion around it, which is the point at
+    which it stops reading as a cut.
+    """
+    d = np.linalg.norm(np.diff(clip["posed_joints"], axis=0), axis=-1).max(axis=1)
+    return float(d.mean())
 
 
 def tail_pin(npz, cut_end: int, n: int, at_index: int) -> list:
@@ -108,8 +112,9 @@ def samples_for(frames: int, scene_fps: float, source_fps: float) -> int:
     return max(1, int(frames / scene_fps * source_fps))
 
 
-def load_npz_bytes(blob: bytes):
-    return np.load(io.BytesIO(blob))
+def load_npz_bytes(blob: bytes) -> dict:
+    """Read every array out of the archive once; an NpzFile re-decompresses per lookup."""
+    return dict(np.load(io.BytesIO(blob)))
 
 
 # -- Houdini side -------------------------------------------------------------
@@ -131,19 +136,18 @@ def regenerate(node, seg_index: int, to_end: bool = False, poll: float = 2.0):
     is a second copy of the background poller in the generate callback. Returns a one-line
     summary for the node's Status.
     """
-    import json
     import os
     import time
 
     import hou
     import requests
 
-    raw = node.parm("timeline_json").eval().strip()
-    tl = json.loads(raw) if raw else {}
-    segs = tl.get("segments") or []
-    if not segs:
+    from .model import Timeline
+
+    tl = Timeline.from_json(node.parm("timeline_json").eval())
+    if not tl.segments:
         raise ValueError("This node has no timeline to regenerate from.")
-    if not 0 <= seg_index < len(segs):
+    if not 0 <= seg_index < len(tl.segments):
         raise ValueError("Sequence %d is outside the timeline." % (seg_index + 1))
     if seg_index == 0:
         raise ValueError("Sequence 1 has no earlier motion to continue from; use Generate.")
@@ -151,13 +155,13 @@ def regenerate(node, seg_index: int, to_end: bool = False, poll: float = 2.0):
     if not src or not os.path.exists(src):
         raise ValueError("No generated clip on this node yet. Press Generate first.")
 
-    n = max(1, int(tl.get("transition_frames", 5)))
+    n = max(1, int(tl.transition_frames))
     scene_fps = float(hou.fps())
     source_fps = float(node.parm("source_fps").eval() or 30)
-    frames = [int(sg["frames"]) for sg in segs]
+    frames = [s.frames for s in tl.segments]
     cut = cut_sample(frames, seg_index, scene_fps, source_fps)
 
-    old = np.load(src)
+    old = dict(np.load(src))     # read the archive once; an NpzFile re-decompresses per lookup
     have = old["posed_joints"].shape[0]
     # A bounds check is not enough: edited sequence lengths still produce an in-range cut,
     # just the wrong one. Compare what the timeline describes against what is on disk.
@@ -173,11 +177,10 @@ def regenerate(node, seg_index: int, to_end: bool = False, poll: float = 2.0):
 
     # the last sequence has nothing after it, so a single re-roll and a run to the end
     # are the same thing
-    single = not to_end and seg_index + 1 < len(segs)
-    send = segs[seg_index:seg_index + 1] if single else segs[seg_index:]
+    single = not to_end and seg_index + 1 < len(tl.segments)
+    send = tl.segments[seg_index:seg_index + 1] if single else tl.segments[seg_index:]
     body = {
-        "segments": [{"prompt": sg["prompt"].strip(),
-                      "duration": int(sg["frames"]) / scene_fps} for sg in send],
+        "segments": Timeline(send).request_segments(scene_fps),
         "transition_frames": n,
         "model": node.parm("model").evalAsString(),
         "force": bool(node.parm("force").eval()),
@@ -220,11 +223,12 @@ def regenerate(node, seg_index: int, to_end: bool = False, poll: float = 2.0):
 
     merged = splice(old, new, cut, n, resume_at=resume_at)
     head_at = cut - n
-    jump, normal = seam_error(old, merged, head_at)
+    normal = mean_step(old)
+    jump = seam_jump(merged, head_at)
     joins = "%.2f cm" % (jump * 100)
     worst = jump
     if resume_at is not None:                      # a single sequence has two joins
-        tail_jump, _ = seam_error(old, merged, head_at + new["posed_joints"].shape[0])
+        tail_jump = seam_jump(merged, head_at + new["posed_joints"].shape[0])
         joins = "%.2f / %.2f cm" % (jump * 100, tail_jump * 100)
         worst = max(worst, tail_jump)
 
@@ -242,8 +246,3 @@ def regenerate(node, seg_index: int, to_end: bool = False, poll: float = 2.0):
     node.parm("status").set(msg)      # so the node agrees with whoever called us
     node.cook(force=True)
     return msg
-
-
-def regenerate_from(node, seg_index: int, poll: float = 2.0):
-    """Backwards-compatible alias: this sequence and every one after it."""
-    return regenerate(node, seg_index, to_end=True, poll=poll)

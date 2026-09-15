@@ -161,6 +161,27 @@ TPOSE_ROTS = [
 
 import json as _json
 
+_CLIP_CACHE = {}
+
+
+def load_clip(path):
+    """Every array in the NPZ, read once per file.
+
+    The animated cook runs on every frame change (its Frame parm is $F) and an NpzFile
+    re-decompresses the whole array on each lookup, so the uncached version re-read a
+    couple of MB per frame to use one sample of it.
+    """
+    import os
+    import numpy as np
+    key = (path, os.path.getmtime(path))
+    hit = _CLIP_CACHE.get(key)
+    if hit is None:
+        # ponytail: one clip cached; make it an LRU if several nodes with different
+        # clips ever thrash it (that case is no slower than no cache at all).
+        _CLIP_CACHE.clear()
+        hit = _CLIP_CACHE[key] = dict(np.load(path))
+    return hit
+
 
 def read_timeline(node):
     raw = node.parm("timeline_json").eval().strip()
@@ -172,7 +193,6 @@ def read_timeline(node):
 
 def write_timeline(node, tl):
     """Write the JSON and the parms it mirrors. Returns True if anything changed."""
-    import hou
     segs = tl.get("segments") or []
     tl["version"] = 1
     tl.setdefault("transition_frames", 5)
@@ -209,15 +229,17 @@ def rebuild_segments(node):
             pp.set(s["prompt"])
         if pf.eval() != int(s["frames"]):
             pf.set(int(s["frames"]))
-    refresh_starts(node)
+    refresh_starts(node, segs)
 
 
-def refresh_starts(node):
-    """Fill each instance's read-only first and last scene frame."""
+def refresh_starts(node, segs=None):
+    """Fill each instance's read-only first and last scene frame. Callers that have
+    already parsed the timeline pass `segs` rather than making us re-read the parm."""
     start = node.parm("start_frame")
     if start is None:                    # never take the node down over a display field
         return
-    segs = read_timeline(node).get("segments") or []
+    if segs is None:
+        segs = read_timeline(node).get("segments") or []
     f = int(start.eval())
     for i, sg in enumerate(segs, start=1):
         a, b = node.parm("seg_from%d" % i), node.parm("seg_to%d" % i)
@@ -266,5 +288,5 @@ def sync_from_parms(node):
         node.parm("prompt").set(tl["segments"][0]["prompt"])
     tl["segments"] = new
     changed = write_timeline(node, tl)
-    refresh_starts(node)
+    refresh_starts(node, new)
     return changed

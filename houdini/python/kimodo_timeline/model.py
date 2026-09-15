@@ -45,15 +45,6 @@ class Timeline:
             f += s.frames
         return out
 
-    def segment_at(self, frame: int, start_frame: int = 1) -> int | None:
-        for i, st in enumerate(self.starts(start_frame)):
-            if st <= frame < st + self.segments[i].frames:
-                return i
-        return None
-
-    def seconds(self, fps: float) -> list[float]:
-        return [s.frames / float(fps) for s in self.segments]
-
     # -- segment edits --------------------------------------------------------
     def add(self, prompt: str, frames: int, after: int | None = None) -> int:
         seg = Segment(prompt, frames).clamp()

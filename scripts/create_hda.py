@@ -60,6 +60,27 @@ _MODULE_SRC += '''
 
 import json as _json
 
+_CLIP_CACHE = {}
+
+
+def load_clip(path):
+    """Every array in the NPZ, read once per file.
+
+    The animated cook runs on every frame change (its Frame parm is $F) and an NpzFile
+    re-decompresses the whole array on each lookup, so the uncached version re-read a
+    couple of MB per frame to use one sample of it.
+    """
+    import os
+    import numpy as np
+    key = (path, os.path.getmtime(path))
+    hit = _CLIP_CACHE.get(key)
+    if hit is None:
+        # ponytail: one clip cached; make it an LRU if several nodes with different
+        # clips ever thrash it (that case is no slower than no cache at all).
+        _CLIP_CACHE.clear()
+        hit = _CLIP_CACHE[key] = dict(np.load(path))
+    return hit
+
 
 def read_timeline(node):
     raw = node.parm("timeline_json").eval().strip()
@@ -71,7 +92,6 @@ def read_timeline(node):
 
 def write_timeline(node, tl):
     """Write the JSON and the parms it mirrors. Returns True if anything changed."""
-    import hou
     segs = tl.get("segments") or []
     tl["version"] = 1
     tl.setdefault("transition_frames", 5)
@@ -108,15 +128,17 @@ def rebuild_segments(node):
             pp.set(s["prompt"])
         if pf.eval() != int(s["frames"]):
             pf.set(int(s["frames"]))
-    refresh_starts(node)
+    refresh_starts(node, segs)
 
 
-def refresh_starts(node):
-    """Fill each instance's read-only first and last scene frame."""
+def refresh_starts(node, segs=None):
+    """Fill each instance's read-only first and last scene frame. Callers that have
+    already parsed the timeline pass `segs` rather than making us re-read the parm."""
     start = node.parm("start_frame")
     if start is None:                    # never take the node down over a display field
         return
-    segs = read_timeline(node).get("segments") or []
+    if segs is None:
+        segs = read_timeline(node).get("segments") or []
     f = int(start.eval())
     for i, sg in enumerate(segs, start=1):
         a, b = node.parm("seg_from%d" % i), node.parm("seg_to%d" % i)
@@ -165,7 +187,7 @@ def sync_from_parms(node):
         node.parm("prompt").set(tl["segments"][0]["prompt"])
     tl["segments"] = new
     changed = write_timeline(node, tl)
-    refresh_starts(node)
+    refresh_starts(node, new)
     return changed
 '''
 
@@ -202,7 +224,7 @@ def _cook():
         return  # no NPZ yet - output empty geometry, wait for Generate
 
     geo = node.geometry()
-    data        = np.load(npz_path)
+    data        = _m.load_clip(npz_path)
     posed       = data["posed_joints"]    # (T, 77, 3) world positions
     global_rots = data["global_rot_mats"] # (T, 77, 3, 3) world rotations
     T           = posed.shape[0]
@@ -232,13 +254,12 @@ def _cook():
     # Optional: Kimodo's per-frame foot-contact labels. Absent from NPZs that only
     # carry the two keys above, so the attribute is written only when they exist.
     contacts = {}
-    if "foot_contacts" in data.files:
+    if "foot_contacts" in data:
         fc = data["foot_contacts"]
         channels = _FOOT_CHANNELS.get(fc.shape[-1])
         if channels:
             contacts = {n: int(v) for n, v in zip(channels, fc[frame])}
 
-    paths = []
     def _build_path(i):
         p = SOMA77_PARENTS[i]
         return ('/' + SOMA77_JOINTS[i]) if p < 0 else (_build_path(p) + '/' + SOMA77_JOINTS[i])
@@ -556,6 +577,7 @@ else:
                 _set("status", f"Poll error ({fails}/3): {e}")
                 if fails >= 3:
                     _fail(f"Lost contact with the server while polling: {e}")
+                    _set("job_id", "")
                     break
                 continue
             status  = data["status"]
@@ -579,6 +601,7 @@ else:
                                 fh.write(chunk)
                 except Exception as e:
                     _fail(f"NPZ download failed: {e}")
+                    _set("job_id", "")
                     break
                 def _finish():
                     fps = node.parm("source_fps").eval() or 30
@@ -587,7 +610,7 @@ else:
                     node.parm("progress").set(1.0)
                     node.parm("clip_info").set(
                         f"{secs:.2f} s = {round(secs * hou.fps())} frames @ {hou.fps():g} fps "
-                        f"({frames} samples @ {fps} fps)")
+                        f"({frames} samples @ {fps:g} fps)")
                     node.parm("npz_path").set(local_npz)
                     node.parm("job_id").set("")
                     node.cook(force=True)
@@ -596,9 +619,11 @@ else:
                 break
             elif status == "failed":
                 _fail(f"Generation failed: {data.get('error') or 'no detail from server'}")
+                _set("job_id", "")
                 break
             elif status == "cancelled":
                 _set("status", "Cancelled")
+                _set("job_id", "")
                 break
             else:
                 prog, phase = data.get("progress"), data.get("phase")
@@ -801,12 +826,10 @@ if tab is not None:
     tab.setIsCurrentTab()
 """
 
-# Runs when a node of this type is created: generator shape, default colour.
+# The panel picks any change up from timeline_json on its next tick.
 _SEG_SYNC_CB = r"""
-import hou
 node = kwargs["node"]
-if node.type().hdaModule().sync_from_parms(node):
-    pass          # the panel picks the change up from timeline_json on its next tick
+node.type().hdaModule().sync_from_parms(node)
 """
 
 
@@ -848,6 +871,7 @@ node.type().hdaModule().run_regenerate(node, int(kwargs["script_multiparm_index"
 
 
 
+# Runs when a node of this type is created: node shape, and the first sequence.
 _ON_CREATED = r"""
 node = kwargs["node"]
 node.setUserData("nodeshape", "bulge")
@@ -877,21 +901,17 @@ _PROMPT_HELP = (
     "__Do not prompt for finger or hand detail.__ Kimodo predicts on a 30-joint skeleton "
     "that strips hand detail; the fingers you get back are reconstructed, never generated. "
     "Set __Blend Fingers__ to 0 when retargeting, for the same reason."
-    "\n\nGreyed out while this node has a __timeline__: the segments in the Kimodo "
-    "Timeline panel are what gets generated, and this field is ignored. Press "
-    "__Detach timeline__ in the panel to go back to a single prompt."
 )
 
 
-def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None):
+def build_hda(node_name, description, hda_path, generate_cb):
     """Build the kimodo_motion HDA.
 
     Output order follows SideFX's character/test-geometry nodes so a Joint Deform wires
     straight across (0 -> 0, 1 -> 1, 2 -> 2):
       0 Rest Geometry (skin mesh)   1 Capture Pose (A-pose)   2 Animated Pose   3 T-Pose
-    skin_sections: {section_name: bytes} from build_skin.py. When None, only
-    Animated Pose (0) and T-Pose (1) are produced.
     """
+    skin_sections = _skin_sections()   # {section_name: bytes} from build_skin.py
     obj = hou.node("/obj")
     geo = obj.createNode("geo", node_name + "_setup")
     geo.deleteItems(geo.children())
@@ -919,20 +939,15 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
             o.setColor(hou.Color(OUT_COLORS[idx]))
         return o
 
-    if skin_sections:
-        skin_sop = subnet.createNode("python", "skin_sop")
-        skin_sop.parm("python").set(_SECTION_LOADER % "skin.bgeo.sc")
-        apose_sop = subnet.createNode("python", "apose_sop")
-        apose_sop.parm("python").set(_SECTION_LOADER % "apose.bgeo.sc")
-        first = _out(0, skin_sop)
-        _out(1, apose_sop)
-        _out(2, anim_sop)
-        _out(3, tpose_sop)
-        labels = ["Rest Geometry", "Capture Pose", "Animated Pose", "T-Pose"]
-    else:
-        first = _out(0, anim_sop)
-        _out(1, tpose_sop)
-        labels = ["Animated Pose", "T-Pose"]
+    skin_sop = subnet.createNode("python", "skin_sop")
+    skin_sop.parm("python").set(_SECTION_LOADER % "skin.bgeo.sc")
+    apose_sop = subnet.createNode("python", "apose_sop")
+    apose_sop.parm("python").set(_SECTION_LOADER % "apose.bgeo.sc")
+    first = _out(0, skin_sop)
+    _out(1, apose_sop)
+    _out(2, anim_sop)
+    _out(3, tpose_sop)
+    labels = ["Rest Geometry", "Capture Pose", "Animated Pose", "T-Pose"]
 
     first.setDisplayFlag(True)
     first.setRenderFlag(True)
@@ -963,12 +978,11 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
     hda_def.setExtraFileOption("OnCreated/IsPython", True)
     # Shown under the node in the network editor (Type Properties > Node > Descriptive Parm).
     hda_def.addSection("DescriptiveParmName", "status")
-    if skin_sections:
-        # Store the binary bgeo as base64 text so the section round-trips cleanly
-        # (HDASection.contents() returns str; raw bytes don't survive that).
-        import base64
-        for sname, data in skin_sections.items():
-            hda_def.addSection(sname, base64.b64encode(data).decode("ascii"))
+    # Store the binary bgeo as base64 text so the section round-trips cleanly
+    # (HDASection.contents() returns str; raw bytes don't survive that).
+    import base64
+    for sname, data in skin_sections.items():
+        hda_def.addSection(sname, base64.b64encode(data).decode("ascii"))
 
     # Tab menu: Kimodo instead of the generic "Digital Assets" submenu.
     shelf = hda_def.sections().get("Tools.shelf")
@@ -979,9 +993,7 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
 
     # -- parameter interface --------------------------------------------------
     ptg = hou.ParmTemplateGroup()   # start fresh - no inherited subnet parms
-    always_off = '{ status != "__never__" }'   # disablewhen that is always true: read-only field
     timeline_owns = '{ has_timeline == 1 }'   # the Timeline panel drives these while it has data
-    no_timeline   = '{ has_timeline == 0 }'   # nothing to detach until there is one
 
     # Tab: Generate - the everyday controls.
     gen = hou.FolderParmTemplate("fld_generate", "Generate", folder_type=hou.folderType.Tabs)
@@ -1046,8 +1058,7 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
     seg.addParmTemplate(hou.StringParmTemplate(
         "seg_prompt#", "Prompt", 1, default_value=("",),
         script_callback=_SEG_SYNC_CB, script_callback_language=hou.scriptLanguage.Python,
-        help="What the character does in this sequence. Same guidance as the Prompt field: "
-             "name the body mechanics, not the intent.",
+        help=_PROMPT_HELP,
     ))
     seg.addParmTemplate(hou.IntParmTemplate(
         "seg_from#", "Frames", 1, default_value=(0,), is_hidden=True,
@@ -1080,10 +1091,11 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
     seg.addParmTemplate(hou.ButtonParmTemplate(
         "seg_regen#", "Regenerate", script_callback=_SEG_REGEN_CB,
         script_callback_language=hou.scriptLanguage.Python, join_with_next=True,
-        help="Re-roll this sequence and every sequence after it, keeping everything before it.\n"
-             "The motion already generated for the previous sequence is sent back as the seam, "
-             "so the join is continuous; measured at well under a millimetre against about "
-             "1.5 cm of ordinary motion per sample.\n"
+        help="Re-roll this sequence alone. Everything before and after it is untouched and "
+             "the clip keeps its length.\n"
+             "The previous sequence's tail is sent back as the seam and this sequence's own "
+             "tail is pinned to the frames the next one was generated against, so both joins "
+             "stay continuous; measured at 0.80x and 0.39x of the clip's own per-sample motion.\n"
              "Much cheaper than Generate, which re-runs the whole clip. Blocks until done.\n"
              "Not available on the first sequence, which has no earlier motion to continue from.",
     ))
@@ -1098,7 +1110,8 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
         default_value=("a person walks forward",),
         tags={"editor": "1", "editorlines": "4-8"},
         is_hidden=True,
-        help=_PROMPT_HELP,
+        help="Legacy single prompt, kept so HIPs saved before the Sequences multiparm "
+             "still read. The __Sequences__ above are what gets generated.",
     ))
     gen.addParmTemplate(hou.IntParmTemplate(
         "duration_frames", "Duration (frames)", 1,
@@ -1111,19 +1124,10 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
              "many frames.",
     ))
     gen.addParmTemplate(hou.StringParmTemplate(
-        "status", "Status", 1,
-        default_value=("",),
-        is_hidden=True,
-        help="Live job state: `Queued`, `Running (Ns)`, "
-             "`Downloading`, `Done (Ns)`, `Done (cached)`, "
-             "`Failed`, `Cancelled`.\nAlso shows the "
-             "__Test Connection__ result.",
+        "status", "Status", 1, default_value=("",), is_hidden=True,   # shown by status_label
     ))
     gen.addParmTemplate(hou.StringParmTemplate(
-        "clip_info", "Clip", 1,
-        default_value=("",),
-        is_hidden=True,
-        help="Length of the last generated clip in samples and seconds.",
+        "clip_info", "Clip", 1, default_value=("",), is_hidden=True,   # shown by clip_label
     ))
     gen.addParmTemplate(hou.FloatParmTemplate(
         "scene_fps", "Scene FPS", 1,
@@ -1348,5 +1352,4 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
 
 
 # -- build the HDA ------------------------------------------------------------
-build_hda("kimodo_motion", "Kimodo Motion Generator",
-          _HDA_PATH, _GENERATE_CB, skin_sections=_skin_sections())
+build_hda("kimodo_motion", "Kimodo Motion Generator", _HDA_PATH, _GENERATE_CB)
