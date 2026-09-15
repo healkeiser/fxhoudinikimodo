@@ -33,6 +33,19 @@ TRACK_COLORS = {
     "RightHand": QtGui.QColor("#ff8a65"), "LeftFoot": QtGui.QColor("#7ed491"),
     "RightFoot": QtGui.QColor("#d98cf0"),
 }
+def later(fn):
+    """Run fn from the event loop rather than from inside the handler we are in.
+
+    Anything that opens a nested event loop (a modal dialog) or hands control to Houdini
+    (a progress dialog, a forced cook, a parm button callback) must not do it during Qt
+    event dispatch. The dialog is then created while Qt is still dispatching, so it never
+    gets the event-loop time to paint and no progress bar appears at all; and Houdini,
+    which blocks mouse input to its own panes while it believes an operation is running,
+    can be left with that block in place after the operation has finished.
+    """
+    QtCore.QTimer.singleShot(0, fn)
+
+
 def text_on(bg):
     """Black or white body text, whichever stays readable on this block colour.
     The amber and green segment colours are too light to carry white text."""
@@ -451,7 +464,7 @@ class Canvas(QtWidgets.QWidget):
             i, _ = self._seg_at(pos)
             if i >= 0:
                 self._mode = None
-                self._later(lambda: self.edit_prompt(i))
+                later(lambda: self.edit_prompt(i))
         elif row == "track" and pos.x() >= GUTTER:
             # double-click on a track adds a key at that frame (or removes the one under the cursor)
             self._mode = None
@@ -470,8 +483,8 @@ class Canvas(QtWidgets.QWidget):
         if row == "prompt":
             i, _ = self._seg_at(pos)
             if i >= 0:
-                menu.addAction("Edit segment\u2026", lambda: self._later(lambda: self.edit_prompt(i)))
-                menu.addAction("Add segment after", lambda: self._later(lambda: self.add_segment(after=i)))
+                menu.addAction("Edit segment\u2026", lambda: later(lambda: self.edit_prompt(i)))
+                menu.addAction("Add segment after", lambda: later(lambda: self.add_segment(after=i)))
                 menu.addAction("Split at playhead", lambda: self.split_at(i, self.playhead))
                 menu.addSeparator()
                 one = menu.addAction("Regenerate this sequence\u2026",
@@ -486,7 +499,7 @@ class Canvas(QtWidgets.QWidget):
                 menu.addSeparator()
                 menu.addAction("Delete segment", lambda: self.remove_segment(i))
             else:
-                menu.addAction("Add segment at end", lambda: self._later(self.add_segment))
+                menu.addAction("Add segment at end", lambda: later(self.add_segment))
         elif row == "track":
             f = self.frame_at(pos.x())
             k = self._key_at(track, pos.x())
@@ -514,19 +527,6 @@ class Canvas(QtWidgets.QWidget):
         self.frameRequested.emit(f)
 
     # -- model edits (each ends in one undoable write) ------------------------
-    def _later(self, fn):
-        """Run fn from the event loop rather than from inside the handler we are in.
-
-        Anything that opens a nested event loop (a modal dialog) or hands control to
-        Houdini (a progress dialog, a forced cook) must not do it during Qt event
-        dispatch. Houdini blocks mouse input to its own panes while it believes a modal
-        operation is running, and entering that state from inside a mouse handler, or
-        from inside QMenu.exec, leaves the block in place after the dialog has gone: the
-        panel keeps working because it is plain Qt, keyboard accelerators keep working,
-        and every pane of Houdini ignores the mouse.
-        """
-        QtCore.QTimer.singleShot(0, fn)
-
     def _ask(self, prompt, frames):
         """Run the segment dialog and return (accepted, prompt, frames).
 
@@ -659,7 +659,8 @@ class TimelineWidget(QtWidgets.QWidget):
         self.status_label = QtWidgets.QLabel("")
         self.status_label.setStyleSheet("color: #9a9a9a")
         foot.addWidget(self.status_label)
-        self.cancel_btn = QtWidgets.QPushButton("Cancel"); self.cancel_btn.clicked.connect(lambda: self.node and bridge.cancel(self.node))
+        self.cancel_btn = QtWidgets.QPushButton("Cancel")
+        self.cancel_btn.clicked.connect(lambda: later(lambda: self.node and bridge.cancel(self.node)))
         foot.addWidget(self.cancel_btn)
         self.gen_btn = QtWidgets.QPushButton("Generate"); self.gen_btn.setDefault(True)
         # No stylesheet here: any stylesheet on a QPushButton hands rendering to
@@ -667,7 +668,7 @@ class TimelineWidget(QtWidgets.QWidget):
         # button background. Get bold and width the native way so the chrome survives.
         _f = self.gen_btn.font(); _f.setBold(True); self.gen_btn.setFont(_f)
         self.gen_btn.setMinimumWidth(110)
-        self.gen_btn.clicked.connect(self._generate)
+        self.gen_btn.clicked.connect(lambda: later(self._generate))
         foot.addWidget(self.gen_btn)
         lay.addLayout(foot)
 
