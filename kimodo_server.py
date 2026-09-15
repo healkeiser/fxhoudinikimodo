@@ -32,7 +32,7 @@ RESIDENT_MODEL = os.environ.get("KIMODO_MODEL", "")
 _jobs: dict[str, dict] = {}
 
 # Resident-mode state: a single-slot model cache and a lock that serialises
-# inference (one GPU → one generation at a time).
+# inference (one GPU -> one generation at a time).
 _model = None
 _model_key: Optional[str] = None
 _model_lock = asyncio.Lock()
@@ -67,7 +67,7 @@ def _build_constraints(constraints, model) -> list:
 
     Standard Kimodo dicts (root2d / fullbody / end-effector with local axis-angle)
     go through load_constraints_lst. The bridge also accepts two "global" dict types
-    authored from posed Houdini geometry — `fullbody-global` and `ee-global` — which
+    authored from posed Houdini geometry \u2014 `fullbody-global` and `ee-global` \u2014 which
     carry global joint positions + rotation matrices and are built via the constraint
     constructors directly (the path Kimodo's own demo uses), avoiding any local /
     rest-pose convention round-trip on the client side."""
@@ -274,7 +274,7 @@ async def generate(req: GenerateRequest) -> JobStatus:
     job_id = uuid.uuid4().hex
     _jobs[job_id] = {"status": "queued", "started_at": _time.monotonic(), "prompt": desc}
     asyncio.create_task(_run_job(job_id, req))
-    log.info("[JOB] %s queued — prompt='%s'", job_id[:8], desc)
+    log.info("[JOB] %s queued \u2014 prompt='%s'", job_id[:8], desc)
     return JobStatus(job_id=job_id, status="queued", prompt=desc)
 
 
@@ -329,7 +329,7 @@ async def _run_job(job_id: str, req: GenerateRequest) -> None:
             if not DEV_REFERENCE.exists():
                 job.update(status="failed", error=f"dev_reference.npz not found at {DEV_REFERENCE}")
                 return
-            log.info("[MOCK] %s → %s", job_id[:8], DEV_REFERENCE)
+            log.info("[MOCK] %s \u2192 %s", job_id[:8], DEV_REFERENCE)
             data = np.load(DEV_REFERENCE)
             T, J = data["posed_joints"].shape[:2]
             job.update(status="done", npz_path=str(DEV_REFERENCE), frames=T, joints=J,
@@ -341,7 +341,7 @@ async def _run_job(job_id: str, req: GenerateRequest) -> None:
         if not req.force and out_path.exists():
             data = np.load(out_path)
             T, J = data["posed_joints"].shape[:2]
-            log.info("[CACHE] %s → %s", job_id[:8], out_path.name)
+            log.info("[CACHE] %s \u2192 %s", job_id[:8], out_path.name)
             job.update(status="done", npz_path=str(out_path), frames=T, joints=J,
                        cached=True, elapsed=round(_time.monotonic() - job["started_at"], 1))
             return
@@ -370,7 +370,7 @@ async def _run_job(job_id: str, req: GenerateRequest) -> None:
             "segments": req.segments, "transition_frames": req.transition_frames,
             "frames": int(T), "joints": int(J), "created": _time.time(),
         }, indent=2))
-        log.info("[DONE] %s — %d frames, %d joints, %.1fs", job_id[:8], T, J, elapsed)
+        log.info("[DONE] %s \u2014 %d frames, %d joints, %.1fs", job_id[:8], T, J, elapsed)
         job.update(status="done", npz_path=str(out_path), frames=T, joints=J,
                    cached=False, elapsed=elapsed)
     except Exception as exc:  # never leave a job stuck in "running"

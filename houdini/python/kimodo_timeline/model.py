@@ -32,7 +32,7 @@ class Timeline:
     transition_frames: int = 5
     tracks: dict[str, list[int]] = field(default_factory=lambda: {t: [] for t in TRACKS})
 
-    # ── queries ─────────────────────────────────────────────────────────────
+    # -- queries -------------------------------------------------------------
     @property
     def total_frames(self) -> int:
         return sum(s.frames for s in self.segments)
@@ -54,7 +54,7 @@ class Timeline:
     def seconds(self, fps: float) -> list[float]:
         return [s.frames / float(fps) for s in self.segments]
 
-    # ── segment edits ────────────────────────────────────────────────────────
+    # -- segment edits --------------------------------------------------------
     def add(self, prompt: str, frames: int, after: int | None = None) -> int:
         seg = Segment(prompt, frames).clamp()
         idx = len(self.segments) if after is None else after + 1
@@ -81,7 +81,7 @@ class Timeline:
     def set_prompt(self, index: int, prompt: str) -> None:
         self.segments[index].prompt = prompt
 
-    # ── track edits ──────────────────────────────────────────────────────────
+    # -- track edits ----------------------------------------------------------
     def add_key(self, track: str, frame: int) -> None:
         keys = self.tracks.setdefault(track, [])
         if frame not in keys:
@@ -108,7 +108,7 @@ class Timeline:
         for t, keys in self.tracks.items():
             self.tracks[t] = sorted(k for k in keys if start_frame <= k <= end)
 
-    # ── serialisation ────────────────────────────────────────────────────────
+    # -- serialisation --------------------------------------------------------
     def to_json(self) -> str:
         return json.dumps({
             "version": VERSION,
@@ -141,6 +141,6 @@ class Timeline:
                 pass
         return tl
 
-    # ── what Generate sends ──────────────────────────────────────────────────
+    # -- what Generate sends --------------------------------------------------
     def request_segments(self, fps: float) -> list[dict]:
         return [{"prompt": s.prompt.strip(), "duration": s.frames / float(fps)} for s in self.segments]

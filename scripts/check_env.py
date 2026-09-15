@@ -18,7 +18,7 @@ def check(label, ok, detail=""):
     status = "PASS" if ok else "FAIL"
     line = f"[{status}] {label}"
     if detail:
-        line += f" — {detail}"
+        line += f" \u2014 {detail}"
     print(line)
     return ok
 
@@ -104,7 +104,7 @@ def main():
             )
         )
     else:
-        print("[SKIP] RAM check — could not read system memory")
+        print("[SKIP] RAM check \u2014 could not read system memory")
 
     # Ports
     for port in REQUIRED_PORTS:
