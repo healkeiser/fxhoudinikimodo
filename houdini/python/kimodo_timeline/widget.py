@@ -530,13 +530,24 @@ class Canvas(QtWidgets.QWidget):
     def _ask(self, prompt, frames):
         """Run the segment dialog and return (accepted, prompt, frames).
 
-        Parented to Houdini's main window so it picks up Houdini's stylesheet, which
-        also means Houdini keeps it alive after it closes; a fresh one per edit would
-        then outlive the session. Read what we need while it is alive, then hand it to
-        deleteLater.
+        show() and our own event loop, never exec(). QDialog.exec enters Qt's modal loop,
+        and in Houdini that leaves an operation scope open after the dialog has closed:
+        hou.updateProgressAndCheckForInterrupt stops raising, and from then on every
+        Houdini pane ignores the mouse while this panel keeps working, until a restart.
+        Measured twice with exactly that signature. This is the pattern SideFX use in
+        their own panels, see crowds/bakeagentdialog.py in $HFS/houdini/python3.13libs.
+
+        Parented to Houdini's main window so it picks up Houdini's stylesheet, which also
+        means Houdini keeps it alive after it closes; a fresh one per edit would then
+        outlive the session, so read what we need while it is alive and deleteLater it.
         """
         dlg = PromptDialog(prompt, frames, hou.qt.mainWindow())
-        accepted = run_exec(dlg) == QtWidgets.QDialog.Accepted
+        dlg.show()
+        loop = QtCore.QEventLoop()
+        while dlg.isVisible():
+            # bounded wait rather than a busy spin; wakes for every event either way
+            loop.processEvents(QtCore.QEventLoop.AllEvents, 50)
+        accepted = dlg.result() == QtWidgets.QDialog.Accepted
         text, count = dlg.text(), dlg.frames()
         dlg.deleteLater()
         return accepted, text, count
