@@ -157,3 +157,86 @@ TPOSE_ROTS = [
     (-0.0014171,0.0004116,0.9999989,0.2789345,0.9603102,0.0,-0.9603091,0.2789342,-0.0014757),
     (-0.0014241,0.0003868,0.9999989,0.2621323,0.965032,0.0,-0.965031,0.262132,-0.0014757),
 ]
+
+
+import json as _json
+
+
+def read_timeline(node):
+    raw = node.parm("timeline_json").eval().strip()
+    try:
+        return _json.loads(raw) if raw else {}
+    except Exception:
+        return {}
+
+
+def write_timeline(node, tl):
+    """Write the JSON and the parms it mirrors. Returns True if anything changed."""
+    import hou
+    segs = tl.get("segments") or []
+    tl["version"] = 1
+    tl.setdefault("transition_frames", 5)
+    tl.setdefault("tracks", {})
+    out = _json.dumps(tl, indent=1)
+    if out == node.parm("timeline_json").eval():
+        return False
+    node.parm("timeline_json").set(out)
+    node.parm("has_timeline").set(1 if segs else 0)
+    if segs:
+        node.parm("duration_frames").set(sum(int(s["frames"]) for s in segs))
+    return True
+
+
+def segments_from_parms(node):
+    """The multiparm as a list of segment dicts."""
+    out = []
+    for i in range(1, int(node.parm("segments").eval()) + 1):
+        out.append({"prompt": node.parm("seg_prompt%d" % i).eval(),
+                    "frames": max(1, int(node.parm("seg_frames%d" % i).eval()))})
+    return out
+
+
+def rebuild_segments(node):
+    """Push timeline_json's segments into the multiparm, without churning parms that
+    already match (each set is an undo entry and a recook)."""
+    segs = read_timeline(node).get("segments") or []
+    p = node.parm("segments")
+    if p.eval() != len(segs):
+        p.set(len(segs))
+    for i, s in enumerate(segs, start=1):
+        pp, pf = node.parm("seg_prompt%d" % i), node.parm("seg_frames%d" % i)
+        if pp.eval() != s["prompt"]:
+            pp.set(s["prompt"])
+        if pf.eval() != int(s["frames"]):
+            pf.set(int(s["frames"]))
+    refresh_starts(node)
+
+
+def refresh_starts(node):
+    """Fill each instance's read-only first/last scene frame."""
+    segs = read_timeline(node).get("segments") or []
+    f = int(node.parm("start_frame").eval())
+    for i, sg in enumerate(segs, start=1):
+        a, b = node.parm("seg_from%d" % i), node.parm("seg_to%d" % i)
+        if a is None or b is None:
+            break
+        last = f + int(sg["frames"]) - 1
+        if a.eval() != f:
+            a.set(f)
+        if b.eval() != last:
+            b.set(last)
+        f = last + 1
+
+
+def sync_from_parms(node):
+    """Multiparm edited by hand: fold it back into the JSON."""
+    tl = read_timeline(node)
+    new = segments_from_parms(node)
+    if not new and tl.get("segments"):
+        # emptied: fall back to a single prompt, keeping the first one rather than
+        # losing it. This is what the old Detach Timeline button did.
+        node.parm("prompt").set(tl["segments"][0]["prompt"])
+    tl["segments"] = new
+    changed = write_timeline(node, tl)
+    refresh_starts(node)
+    return changed

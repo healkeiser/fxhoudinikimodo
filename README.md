@@ -187,18 +187,18 @@ A segment spends its opening transitioning out of the previous motion, so it has
 |---|---|---|
 | `a person jumps forward and lands on both feet` | 0.217 | 0.122 |
 | `a person leaps high into the air with both feet off the ground` | 0.940 | **0.900** |
-| `a person stands up and turns around` (no transition beat before it) | -173 deg | **+18 deg** |
-| `a person turns around to face the opposite direction` (after its own transition beat) | -193 deg | **-186 deg** |
+| `a person stands up and turns around` (no transition sequence before it) | -173 deg | **+18 deg** |
+| `a person turns around to face the opposite direction` (after its own transition sequence) | -193 deg | **-186 deg** |
 
 The strong versions keep about 96% of their standalone result. The weak ones lose most of it. So a timeline does not dilute everything by a fixed amount, it exposes prompts that had no margin to begin with.
 
 This is not caused by whatever precedes the segment: after a neutral standing segment the turn still managed only -73 deg, versus -64 deg after a deep squat.
 
-**So validate a beat standalone first, then assemble.** If it is marginal alone it will disappear in a suite.
+**So validate a sequence standalone first, then assemble.** If it is marginal alone it will disappear in a suite.
 
 ### Fix a weak segment by splitting it, not by lengthening it
 
-Duration is beat-dependent, so there is no general rule:
+Duration is sequence-dependent, so there is no general rule:
 
 | Fix | Result |
 |---|---|
@@ -210,7 +210,7 @@ Splitting beat the same total time spent on one segment. Note the opposite happe
 
 ### The same prompt does not give the same take twice
 
-Kimodo is unseeded, so every generation is a different take and the run-to-run spread can be larger than any prompt change. The same jump prompt, in the same position, in suites whose preceding beats were identical:
+Kimodo is unseeded, so every generation is a different take and the run-to-run spread can be larger than any prompt change. The same jump prompt, in the same position, in suites whose preceding sequences were identical:
 
 | Run | Airborne | Hip peak |
 |---|---|---|
@@ -220,7 +220,7 @@ Kimodo is unseeded, so every generation is a different take and the run-to-run s
 
 Nothing changed but the take. A good prompt raises the average, it does not guarantee the result.
 
-So for anything you have to show or ship: **generate, measure the beat you care about, and regenerate if it came up weak.** Do not generate once and assume it holds. `force` bypasses the cache to get a fresh take of an identical request. Note the cache key covers the whole request, so re-rolling one beat of a timeline re-runs every frame of it.
+So for anything you have to show or ship: **generate, measure the sequence you care about, and regenerate if it came up weak.** Do not generate once and assume it holds. `force` bypasses the cache to get a fresh take of an identical request. Note the cache key covers the whole request, so re-rolling one sequence of a timeline re-runs every frame of it.
 
 ### Do not prompt for hand or finger detail
 

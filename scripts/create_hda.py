@@ -53,6 +53,94 @@ _NPZ_DEFAULT = sys.argv[1] if len(sys.argv) > 1 else ""
 # PythonModule section and read by each cook script via hou.pwd().parent().type().hdaModule().
 _MODULE_SRC = open(os.path.join(_HERE, "_soma77.py"), encoding="utf-8").read()
 
+# Segment multiparm <-> timeline_json. The JSON stays canonical because it also holds
+# the pose-key tracks, which have no sensible multiparm form; the multiparm is a real
+# editor over the segments that writes back.
+_MODULE_SRC += '''
+
+import json as _json
+
+
+def read_timeline(node):
+    raw = node.parm("timeline_json").eval().strip()
+    try:
+        return _json.loads(raw) if raw else {}
+    except Exception:
+        return {}
+
+
+def write_timeline(node, tl):
+    """Write the JSON and the parms it mirrors. Returns True if anything changed."""
+    import hou
+    segs = tl.get("segments") or []
+    tl["version"] = 1
+    tl.setdefault("transition_frames", 5)
+    tl.setdefault("tracks", {})
+    out = _json.dumps(tl, indent=1)
+    if out == node.parm("timeline_json").eval():
+        return False
+    node.parm("timeline_json").set(out)
+    node.parm("has_timeline").set(1 if segs else 0)
+    if segs:
+        node.parm("duration_frames").set(sum(int(s["frames"]) for s in segs))
+    return True
+
+
+def segments_from_parms(node):
+    """The multiparm as a list of segment dicts."""
+    out = []
+    for i in range(1, int(node.parm("segments").eval()) + 1):
+        out.append({"prompt": node.parm("seg_prompt%d" % i).eval(),
+                    "frames": max(1, int(node.parm("seg_frames%d" % i).eval()))})
+    return out
+
+
+def rebuild_segments(node):
+    """Push timeline_json's segments into the multiparm, without churning parms that
+    already match (each set is an undo entry and a recook)."""
+    segs = read_timeline(node).get("segments") or []
+    p = node.parm("segments")
+    if p.eval() != len(segs):
+        p.set(len(segs))
+    for i, s in enumerate(segs, start=1):
+        pp, pf = node.parm("seg_prompt%d" % i), node.parm("seg_frames%d" % i)
+        if pp.eval() != s["prompt"]:
+            pp.set(s["prompt"])
+        if pf.eval() != int(s["frames"]):
+            pf.set(int(s["frames"]))
+    refresh_starts(node)
+
+
+def refresh_starts(node):
+    """Fill each instance's read-only first/last scene frame."""
+    segs = read_timeline(node).get("segments") or []
+    f = int(node.parm("start_frame").eval())
+    for i, sg in enumerate(segs, start=1):
+        a, b = node.parm("seg_from%d" % i), node.parm("seg_to%d" % i)
+        if a is None or b is None:
+            break
+        last = f + int(sg["frames"]) - 1
+        if a.eval() != f:
+            a.set(f)
+        if b.eval() != last:
+            b.set(last)
+        f = last + 1
+
+
+def sync_from_parms(node):
+    """Multiparm edited by hand: fold it back into the JSON."""
+    tl = read_timeline(node)
+    new = segments_from_parms(node)
+    if not new and tl.get("segments"):
+        # emptied: fall back to a single prompt, keeping the first one rather than
+        # losing it. This is what the old Detach Timeline button did.
+        node.parm("prompt").set(tl["segments"][0]["prompt"])
+    tl["segments"] = new
+    changed = write_timeline(node, tl)
+    refresh_starts(node)
+    return changed
+'''
+
 _COOK_SCRIPT = r"""
 import numpy as np
 import hou
@@ -712,8 +800,77 @@ if hou.isUIAvailable():
 """
 
 
+_SEG_SYNC_CB = r"""
+import hou
+node = kwargs["node"]
+if node.type().hdaModule().sync_from_parms(node):
+    pass          # the panel picks the change up from timeline_json on its next tick
+"""
+
+
+_SEG_SPLIT_CB = r"""
+import hou
+node = kwargs["node"]
+i = int(kwargs["script_multiparm_index"]) - 1
+m = node.type().hdaModule()
+tl = m.read_timeline(node)
+segs = tl.get("segments") or []
+if 0 <= i < len(segs):
+    start = int(node.parm("start_frame").eval()) + sum(int(s["frames"]) for s in segs[:i])
+    left = int(round(hou.frame())) - start
+    if 0 < left < int(segs[i]["frames"]):
+        segs.insert(i + 1, {"prompt": segs[i]["prompt"],
+                            "frames": int(segs[i]["frames"]) - left})
+        segs[i]["frames"] = left
+        tl["segments"] = segs
+        with hou.undos.group("Kimodo: split segment"):
+            m.write_timeline(node, tl)
+            m.rebuild_segments(node)
+    elif hou.isUIAvailable():
+        hou.ui.setStatusMessage(
+            "Kimodo: put the playhead inside this segment to split it.",
+            severity=hou.severityType.Warning)
+"""
+
+
+_SEG_REGEN_CB = r"""
+import hou
+node = kwargs["node"]
+i = int(kwargs["script_multiparm_index"]) - 1
+try:
+    from kimodo_timeline import regen
+except ImportError:
+    node.parm("last_error").set(
+        "Regenerate needs houdini/python on PYTHONPATH (the fxhoudinikimodo package).")
+    raise
+try:
+    msg = regen.regenerate_from(node, i)
+except hou.OperationInterrupted:
+    node.parm("status").set("Cancelled")
+except Exception as e:
+    node.parm("last_error").set(str(e))
+    node.parm("status").set("Error: %s" % e)
+    if hou.isUIAvailable():
+        hou.ui.setStatusMessage("Kimodo: %s" % e, severity=hou.severityType.Error)
+else:
+    node.parm("last_error").set("")
+    node.parm("status").set(msg)
+    if hou.isUIAvailable():
+        hou.ui.setStatusMessage("Kimodo: %s" % msg,
+                                severity=hou.severityType.ImportantMessage)
+"""
+
+
 _ON_CREATED = r"""
-kwargs["node"].setUserData("nodeshape", "bulge")
+node = kwargs["node"]
+node.setUserData("nodeshape", "bulge")
+# Start with a single sequence: Sequences is the only place a prompt lives, so a fresh
+# node must not come up empty.
+if node.parm("segments").eval() == 0:
+    node.parm("segments").set(1)
+    node.parm("seg_prompt1").set(node.parm("prompt").eval())
+    node.parm("seg_frames1").set(int(node.parm("duration_frames").eval()))
+    node.type().hdaModule().sync_from_parms(node)
 """
 
 _PROMPT_HELP = (
@@ -843,7 +1000,7 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
         "prompt", "Prompt", 1,
         default_value=("a person walks forward",),
         tags={"editor": "1", "editorlines": "4-8"},
-        disable_when=timeline_owns,
+        is_hidden=True,
         help=_PROMPT_HELP,
     ))
     gen.addParmTemplate(hou.ButtonParmTemplate(
@@ -854,25 +1011,58 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
         help="Open the __Kimodo Timeline__ panel for this node: prompt segments laid end to "
              "end, transitions, and Full Body / hand / foot pose tracks.\nWhile a timeline "
              "exists it owns Prompt, Duration and the pose parameters below.\n\n"
-             "__A beat is weaker in a timeline than on its own.__ A segment spends its "
+             "__A sequence is weaker in a timeline than on its own.__ A segment spends its "
              "opening transitioning out of the previous motion, so it has less time left for "
              "its own action. Measured: _a person stands up and turns around_ turns 173 "
-             "deg generated alone, but only 18 deg as segment 6 of 8. Generate a beat on its "
+             "deg generated alone, but only 18 deg as segment 6 of 8. Generate a sequence on its "
              "own first to check it works, then add it to the timeline.\n"
              "If a segment comes out weak, __split it__ rather than lengthen it: as one "
              "2.25 s segment that turn managed 64 deg, at 3.50 s it managed 154 deg, but split "
              "into _stands up from a squat_ + _turns around to face the opposite "
              "direction_ it managed 193 deg for the same total time.",
     ))
-    gen.addParmTemplate(hou.ButtonParmTemplate(
-        "detach_timeline", "Detach Timeline",
-        script_callback=_DETACH_CB,
-        script_callback_language=hou.scriptLanguage.Python,
-        disable_when=no_timeline,
-        help="Drop the timeline and go back to a single __Prompt__ + __Duration__. The "
-             "first segment's text is kept as the Prompt so nothing is lost, and the whole "
-             "thing is one undo step.\nDisabled while this node has no timeline.",
+    seg = hou.FolderParmTemplate("segments", "Sequences",
+                                 folder_type=hou.folderType.ScrollingMultiparmBlock)
+    seg.setConditional(hou.parmCondType.HideWhen, no_timeline)
+    seg.addParmTemplate(hou.StringParmTemplate(
+        "seg_prompt#", "Prompt", 1, default_value=("",),
+        script_callback=_SEG_SYNC_CB, script_callback_language=hou.scriptLanguage.Python,
+        help="What the character does in this sequence. Same guidance as the Prompt field: "
+             "name the body mechanics, not the intent.",
     ))
+    seg.addParmTemplate(hou.IntParmTemplate(
+        "seg_from#", "Frames", 1, default_value=(0,),
+        disable_when=always_off, join_with_next=True,
+        help="First scene frame of this sequence, counted from __Start Frame__. "
+             "Read-only: it follows the lengths above it.",
+    ))
+    seg.addParmTemplate(hou.IntParmTemplate(
+        "seg_to#", "to", 1, default_value=(0,),
+        disable_when=always_off, join_with_next=True,
+        help="Last scene frame of this sequence. Read-only.",
+    ))
+    seg.addParmTemplate(hou.IntParmTemplate(
+        "seg_frames#", "Length", 1, default_value=(48,),
+        min=1, max=240, min_is_strict=True, max_is_strict=False, join_with_next=True,
+        script_callback=_SEG_SYNC_CB, script_callback_language=hou.scriptLanguage.Python,
+        help="Length of this sequence in scene frames.",
+    ))
+    seg.addParmTemplate(hou.ButtonParmTemplate(
+        "seg_split#", "Split", script_callback=_SEG_SPLIT_CB,
+        script_callback_language=hou.scriptLanguage.Python, join_with_next=True,
+        help="Cut this sequence in two at the playhead, keeping the prompt on both halves.",
+    ))
+    seg.addParmTemplate(hou.ButtonParmTemplate(
+        "seg_regen#", "Regenerate From Here", script_callback=_SEG_REGEN_CB,
+        script_callback_language=hou.scriptLanguage.Python,
+        help="Re-roll this sequence and every sequence after it, keeping everything before it.\n"
+             "The motion already generated for the previous sequence is sent back as the seam, "
+             "so the join is continuous; measured at well under a millimetre against about "
+             "1.5 cm of ordinary motion per sample.\n"
+             "Much cheaper than Generate, which re-runs the whole clip. Blocks until done.\n"
+             "Not available on the first sequence, which has no earlier motion to continue from.",
+    ))
+    gen.addParmTemplate(seg)
     gen.addParmTemplate(hou.IntParmTemplate(
         "duration_frames", "Duration (frames)", 1,
         default_value=(72,),
@@ -1017,6 +1207,8 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
     out = hou.FolderParmTemplate("fld_output", "Output", folder_type=hou.folderType.Tabs)
     out.addParmTemplate(hou.IntParmTemplate(
         "start_frame", "Start Frame", 1,
+        script_callback="hou.pwd().type().hdaModule().refresh_starts(hou.pwd())",
+        script_callback_language=hou.scriptLanguage.Python,
         default_expression=("$FSTART",),
         default_expression_language=(hou.scriptLanguage.Hscript,),
         min=-1000, max=1000, min_is_strict=False, max_is_strict=False,

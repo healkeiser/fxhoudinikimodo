@@ -25,9 +25,9 @@
             name    "prompt"
             label   "Prompt"
             type    string
+            invisible
             default { "a person walks forward" }
             help    "What the character does, in plain __English__. Be specific about body part, direction, speed and style.\n\n__Name the body mechanics, not the intent.__ This matters more than any parameter on this node. Measured: _a person jumps forward and lands on both feet_ gets both feet 0.22 off the ground; _a person leaps high into the air with both feet off the ground_ gets 0.94. Same model, same duration, 4.3x the result.\n\n__Examples__\n_a person walks forward slowly_\n_someone jogs in a circle then stops_\n_a person leaps high into the air with both feet off the ground_\n_a person squats down deeply, knees bent, hips near the floor_\n\n__Do not prompt for finger or hand detail.__ Kimodo predicts on a 30-joint skeleton that strips hand detail; the fingers you get back are reconstructed, never generated. Set __Blend Fingers__ to 0 when retargeting, for the same reason.\n\nGreyed out while this node has a __timeline__: the segments in the Kimodo Timeline panel are what gets generated, and this field is ignored. Press __Detach timeline__ in the panel to go back to a single prompt."
-            disablewhen "{ has_timeline == 1 }"
             parmtag { "editor" "1" }
             parmtag { "editorlines" "4-8" }
         }
@@ -35,22 +35,78 @@
             name    "open_timeline"
             label   "Open Timeline"
             type    button
-            joinnext
             default { "0" }
-            help    "Open the __Kimodo Timeline__ panel for this node: prompt segments laid end to end, transitions, and Full Body / hand / foot pose tracks.\nWhile a timeline exists it owns Prompt, Duration and the pose parameters below.\n\n__A beat is weaker in a timeline than on its own.__ A segment spends its opening transitioning out of the previous motion, so it has less time left for its own action. Measured: _a person stands up and turns around_ turns 173 deg generated alone, but only 18 deg as segment 6 of 8. Generate a beat on its own first to check it works, then add it to the timeline.\nIf a segment comes out weak, __split it__ rather than lengthen it: as one 2.25 s segment that turn managed 64 deg, at 3.50 s it managed 154 deg, but split into _stands up from a squat_ + _turns around to face the opposite direction_ it managed 193 deg for the same total time."
+            help    "Open the __Kimodo Timeline__ panel for this node: prompt segments laid end to end, transitions, and Full Body / hand / foot pose tracks.\nWhile a timeline exists it owns Prompt, Duration and the pose parameters below.\n\n__A sequence is weaker in a timeline than on its own.__ A segment spends its opening transitioning out of the previous motion, so it has less time left for its own action. Measured: _a person stands up and turns around_ turns 173 deg generated alone, but only 18 deg as segment 6 of 8. Generate a sequence on its own first to check it works, then add it to the timeline.\nIf a segment comes out weak, __split it__ rather than lengthen it: as one 2.25 s segment that turn managed 64 deg, at 3.50 s it managed 154 deg, but split into _stands up from a squat_ + _turns around to face the opposite direction_ it managed 193 deg for the same total time."
             parmtag { "script_callback" "\nimport hou\nnode = kwargs[\"node\"]\nnode.setSelected(True, clear_all_selected=True)\ndesk = hou.ui.curDesktop()\ntab = None\nfor pt in hou.ui.paneTabs():          # hou.ui.paneTabs() includes floating panels; desk.paneTabs() does not\n    if pt.type() == hou.paneTabType.PythonPanel:\n        iface = pt.activeInterface()\n        if iface is not None and iface.name() == \"kimodo_timeline\":\n            tab = pt\n            break\nif tab is None:\n    iface = hou.pypanel.interfaceByName(\"kimodo_timeline\")\n    if iface is None:\n        node.parm(\"last_error\").set(\"Kimodo Timeline panel not found: is houdini/python_panels on HOUDINI_PATH (fxhoudinikimodo package)?\")\n        hou.ui.setStatusMessage(\"Kimodo: Timeline panel not found (see node error).\", severity=hou.severityType.Error)\n    else:\n        tab = desk.createFloatingPaneTab(hou.paneTabType.PythonPanel, size=(1100, 420))\n        tab.setActiveInterface(iface)\nif tab is not None:\n    tab.setIsCurrentTab()\n" }
             parmtag { "script_callback_language" "python" }
         }
-        parm {
-            name    "detach_timeline"
-            label   "Detach Timeline"
-            type    button
-            default { "0" }
-            help    "Drop the timeline and go back to a single __Prompt__ + __Duration__. The first segment's text is kept as the Prompt so nothing is lost, and the whole thing is one undo step.\nDisabled while this node has no timeline."
-            disablewhen "{ has_timeline == 0 }"
-            parmtag { "script_callback" "\nimport json, hou\n\nnode = kwargs[\"node\"]\nraw  = node.parm(\"timeline_json\").eval().strip()\nfirst = \"\"\nif raw:\n    try:\n        segs = (json.loads(raw) or {}).get(\"segments\") or []\n        if segs:\n            first = str(segs[0].get(\"prompt\", \"\")).strip()\n    except Exception:\n        pass                      # unreadable timeline: still detach, just keep the old prompt\nwith hou.undos.group(\"Kimodo timeline detach\"):\n    if first:\n        node.parm(\"prompt\").set(first)\n    node.parm(\"timeline_json\").set(\"\")\n    node.parm(\"has_timeline\").set(0)\nif hou.isUIAvailable():\n    hou.ui.setStatusMessage(\"Kimodo: timeline detached, Prompt and Duration are live again.\",\n                            severity=hou.severityType.ImportantMessage)\n" }
-            parmtag { "script_callback_language" "python" }
+        multiscroll {
+            name    "segments"
+            label    "Sequences"
+            default 0
+            hidewhen "{ has_timeline == 0 }"
+
+            parm {
+                name    "seg_prompt#"
+                label   "Prompt"
+                type    string
+                default { "" }
+                help    "What the character does in this sequence. Same guidance as the Prompt field: name the body mechanics, not the intent."
+                parmtag { "script_callback" "\nimport hou\nnode = kwargs[\"node\"]\nif node.type().hdaModule().sync_from_parms(node):\n    pass          # the panel picks the change up from timeline_json on its next tick\n" }
+                parmtag { "script_callback_language" "python" }
+            }
+            parm {
+                name    "seg_from#"
+                label   "Frames"
+                type    integer
+                joinnext
+                default { "0" }
+                help    "First scene frame of this sequence, counted from __Start Frame__. Read-only: it follows the lengths above it."
+                disablewhen "{ status != __never__ }"
+                range   { 0 10 }
+            }
+            parm {
+                name    "seg_to#"
+                label   "to"
+                type    integer
+                joinnext
+                default { "0" }
+                help    "Last scene frame of this sequence. Read-only."
+                disablewhen "{ status != __never__ }"
+                range   { 0 10 }
+            }
+            parm {
+                name    "seg_frames#"
+                label   "Length"
+                type    integer
+                joinnext
+                default { "48" }
+                help    "Length of this sequence in scene frames."
+                range   { 1! 240 }
+                parmtag { "script_callback" "\nimport hou\nnode = kwargs[\"node\"]\nif node.type().hdaModule().sync_from_parms(node):\n    pass          # the panel picks the change up from timeline_json on its next tick\n" }
+                parmtag { "script_callback_language" "python" }
+            }
+            parm {
+                name    "seg_split#"
+                label   "Split"
+                type    button
+                joinnext
+                default { "0" }
+                help    "Cut this sequence in two at the playhead, keeping the prompt on both halves."
+                parmtag { "script_callback" "\nimport hou\nnode = kwargs[\"node\"]\ni = int(kwargs[\"script_multiparm_index\"]) - 1\nm = node.type().hdaModule()\ntl = m.read_timeline(node)\nsegs = tl.get(\"segments\") or []\nif 0 <= i < len(segs):\n    start = int(node.parm(\"start_frame\").eval()) + sum(int(s[\"frames\"]) for s in segs[:i])\n    left = int(round(hou.frame())) - start\n    if 0 < left < int(segs[i][\"frames\"]):\n        segs.insert(i + 1, {\"prompt\": segs[i][\"prompt\"],\n                            \"frames\": int(segs[i][\"frames\"]) - left})\n        segs[i][\"frames\"] = left\n        tl[\"segments\"] = segs\n        with hou.undos.group(\"Kimodo: split segment\"):\n            m.write_timeline(node, tl)\n            m.rebuild_segments(node)\n    elif hou.isUIAvailable():\n        hou.ui.setStatusMessage(\n            \"Kimodo: put the playhead inside this segment to split it.\",\n            severity=hou.severityType.Warning)\n" }
+                parmtag { "script_callback_language" "python" }
+            }
+            parm {
+                name    "seg_regen#"
+                label   "Regenerate From Here"
+                type    button
+                default { "0" }
+                help    "Re-roll this sequence and every sequence after it, keeping everything before it.\nThe motion already generated for the previous sequence is sent back as the seam, so the join is continuous; measured at well under a millimetre against about 1.5 cm of ordinary motion per sample.\nMuch cheaper than Generate, which re-runs the whole clip. Blocks until done.\nNot available on the first sequence, which has no earlier motion to continue from."
+                parmtag { "script_callback" "\nimport hou\nnode = kwargs[\"node\"]\ni = int(kwargs[\"script_multiparm_index\"]) - 1\ntry:\n    from kimodo_timeline import regen\nexcept ImportError:\n    node.parm(\"last_error\").set(\n        \"Regenerate needs houdini/python on PYTHONPATH (the fxhoudinikimodo package).\")\n    raise\ntry:\n    msg = regen.regenerate_from(node, i)\nexcept hou.OperationInterrupted:\n    node.parm(\"status\").set(\"Cancelled\")\nexcept Exception as e:\n    node.parm(\"last_error\").set(str(e))\n    node.parm(\"status\").set(\"Error: %s\" % e)\n    if hou.isUIAvailable():\n        hou.ui.setStatusMessage(\"Kimodo: %s\" % e, severity=hou.severityType.Error)\nelse:\n    node.parm(\"last_error\").set(\"\")\n    node.parm(\"status\").set(msg)\n    if hou.isUIAvailable():\n        hou.ui.setStatusMessage(\"Kimodo: %s\" % msg,\n                                severity=hou.severityType.ImportantMessage)\n" }
+                parmtag { "script_callback_language" "python" }
+            }
         }
+
         parm {
             name    "duration_frames"
             label   "Duration (frames)"
@@ -246,6 +302,8 @@
             default { [ "$FSTART" hscript-expr ] }
             help    "Scene frame on which the clip begins.\nThe __first__ sample holds before it, the __last__ sample holds after the clip ends."
             range   { -1000 1000 }
+            parmtag { "script_callback" "hou.pwd().type().hdaModule().refresh_starts(hou.pwd())" }
+            parmtag { "script_callback_language" "python" }
         }
         parm {
             name    "npz_path"
