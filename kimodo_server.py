@@ -146,8 +146,12 @@ class _Progress:
         self._set_phase("encoding text")
 
     def _set_phase(self, phase: str) -> None:
+        global _encode_est_seen
+        now = _time.monotonic()
+        if self.job.get("phase") == "encoding text":   # not on the first call, no phase yet
+            _encode_est_seen = max(0.1, now - self.job["phase_started"])
         self.job["phase"] = phase
-        self.job["phase_started"] = _time.monotonic()
+        self.job["phase_started"] = now
 
     def __call__(self, iterable, **_):
         items = list(iterable)
@@ -314,11 +318,26 @@ async def generate(req: GenerateRequest) -> JobStatus:
     return JobStatus(job_id=job_id, status="queued", prompt=desc)
 
 
-# Only the denoising loop reports progress, and it is the short part of a segment:
-# roughly 30 s of text encoding on CPU against ~8 s of denoising on GPU. Without this
-# the bar jumps a whole segment then sits still. The creep is an estimate from elapsed
-# time, capped short of the next real milestone so it never overtakes the truth.
-_ENCODE_EST_S = 30.0
+# Only the denoising loop reports progress, and on CPU it is the short part of a segment:
+# roughly 30 s of text encoding against ~8 s of denoising. Without this the bar jumps a
+# whole segment then sits still. The creep is an estimate from elapsed time, capped short
+# of the next real milestone so it never overtakes the truth.
+#
+# 30 s is the measured CPU figure and only a bootstrap: _encode_est_seen below replaces it
+# with a real measurement after the first encode. Until then it can be wrong in two ways.
+# Too high and the creep never gets going, which is what TEXT_ENCODER_DEVICE=cuda does, where
+# encoding all but disappears and the bar behaves as it did before the creep existed. Too low
+# is the worse direction: the ramp hits its ceiling early and sits there, the symptom this
+# exists to fix. The encoder is a separate container, so the server cannot see which device
+# it is on; hence an estimate rather than a branch.
+_ENCODE_EST_S = max(0.1, float(os.environ.get("KIMODO_ENCODE_EST_S", "30")))
+
+# What an encode actually took, the last time one finished on this server. It replaces the
+# estimate above as soon as there is one, and it deliberately survives the job that measured
+# it: a partial regeneration sends a single sequence, so it has no earlier segment of its own
+# to learn from, and by then a full Generate has usually already run. A plain float written by
+# the inference thread and read by the event loop, so no lock.
+_encode_est_seen: Optional[float] = None
 
 
 def _elapsed(job: dict) -> float:
@@ -345,9 +364,10 @@ def _display_progress(job: dict) -> Optional[float]:
     prog, phase = job.get("progress"), job.get("phase")
     if prog is None or not phase or phase.startswith("denoising"):
         return prog
+    est = _ENCODE_EST_S if _encode_est_seen is None else _encode_est_seen
     span = 1.0 / max(1, int(job.get("expected_loops", 1)))
     waited = _time.monotonic() - job.get("phase_started", _time.monotonic())
-    return min(0.99, prog + span * 0.9 * min(1.0, waited / _ENCODE_EST_S))
+    return min(0.99, prog + span * 0.9 * min(1.0, waited / est))
 
 
 @app.get("/jobs/{job_id}")

@@ -296,6 +296,7 @@ Read by `docker-compose.bridge.yaml`:
 | `MOCK_MODE` | `0` | `1` serves `output/dev_reference.npz` without inference, for HDA work without a GPU. |
 | `HF_HUB_OFFLINE` | `1` | Load weights from the local cache only; set `0` for a one-time download. |
 | `TEXT_ENCODERS_DIR` | — | Local folder of LLM2Vec adapters, when you cannot pull Meta's repo directly. |
+| `KIMODO_ENCODE_EST_S` | `30` | Starting guess, in seconds, for how long a segment spends encoding text. It only shapes the progress bar through the phase Kimodo reports nothing for. The server times the first encode it completes and uses that measurement from then on, including for later jobs, so this matters mainly for the very first generation after a restart. The default is the measured CPU figure. |
 | `TEXT_ENCODER_DEVICE` | `cpu` | Where the text encoder runs. `cpu` keeps VRAM free at the cost of ~14 GB of host RAM and the slowest part of every generation; `cuda` is much faster but wants roughly 14 GB of VRAM on top of the motion model. See [Where to run the text encoder](#where-to-run-the-text-encoder). |
 
 ### Where to run the text encoder
