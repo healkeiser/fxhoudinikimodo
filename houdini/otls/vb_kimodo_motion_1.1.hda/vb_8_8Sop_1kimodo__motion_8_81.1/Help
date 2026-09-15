@@ -28,6 +28,37 @@ remote GPU box — set __API Server URL__ accordingly.
   1 -> 1 (__Capture Pose__), 2 -> 2 (__Animated Pose__) — the same order as
   Houdini's Test Geometry characters.
 
+== Writing Prompts ==
+
+Phrasing changes the result more than any parameter on this node. The figures below
+are measured from generated clips: _airborne_ is the highest moment both toes leave
+the ground, _hip_ is pelvis height against a standing height of about 0.98.
+
+__Name the body mechanics, not the intent.__ At the same duration,
+`a person jumps forward and lands on both feet` reaches 0.22 airborne, while
+`a person leaps high into the air with both feet off the ground` reaches 0.94.
+Likewise `crouches low to the ground` only reaches hip 0.72, where
+`squats down deeply, knees bent, hips near the floor` reaches 0.24.
+
+__A beat is weaker inside a timeline than on its own.__ A segment spends its opening
+transitioning out of the previous motion, leaving less time for its own action.
+`a person stands up and turns around` turns 173 degrees generated alone, but only 18
+degrees as segment 6 of 8. Generate a beat by itself to check it works, then add it
+to the timeline. This is not caused by what precedes it: after a neutral standing
+segment the same turn still managed only 73 degrees.
+
+__Split a weak segment rather than lengthening it.__ That turn managed 64 degrees as
+one 2.25 s segment and 154 degrees at 3.50 s, but 193 degrees when split into
+`stands up from a squat` plus `turns around to face the opposite direction` for the
+same total time. Ballistic actions behave the opposite way: doubling the jump from
+2.0 s to 4.0 s made it worse, because the model spreads the action over whatever
+duration it is given.
+
+__Do not prompt for finger or hand detail.__ Kimodo predicts on the 30-joint
+somaskel30, which strips hand detail, then converts to 77 joints on output. The
+fingers you get back are reconstructed, never generated. Set __Blend Fingers__ to 0
+on Biped Retarget for the same reason.
+
 == Parameters ==
 
 API Server URL:

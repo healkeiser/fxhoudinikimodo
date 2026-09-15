@@ -39,6 +39,7 @@
 - [Architecture](#architecture)
 - [Installation](#installation)
 - [Usage](#usage)
+- [Writing Prompts](#writing-prompts)
 - [Environment Variables](#environment-variables)
 - [Development](#development)
 - [Credits](#credits)
@@ -161,6 +162,69 @@ Copy `fxhoudinikimodo.json` into `$HOUDINI_USER_PREF_DIR/packages/` and set `KIM
 6. To put the motion on your own character: **Biped Setup** on both skeletons, **Biped Retarget**, then your deformer. Feed output 3 (T-Pose) through a **Rig Stash Pose** to give Biped Setup a clean rest pose; do not let it synthesise one from the walk.
 
 Parameter by parameter: [houdini/README.md](houdini/README.md).
+
+<!-- WRITING PROMPTS -->
+## Writing Prompts
+
+Prompt phrasing has far more effect on the result than any parameter on the node. The numbers below come from measuring generated clips, not from impressions: *airborne* is the highest moment both toes leave the ground, *hip min* is pelvis height against a standing height of ~0.98, *heading* is net rotation over a segment.
+
+### Name the body mechanics, not the intent
+
+The single highest-leverage change. Same model, same 2.0 s duration, nine words rewritten:
+
+| Prompt | Airborne |
+|---|---|
+| `a person jumps forward and lands on both feet` | 0.217 |
+| `a person leaps high into the air with both feet off the ground` | **0.940** |
+
+A 4.3x difference. The same pattern holds elsewhere: `crouches low to the ground` reaches hip 0.722, while `squats down deeply, knees bent, hips near the floor` reaches **0.237**. Describe what the body does; the model does not infer it from the verb.
+
+### A weak prompt collapses inside a timeline; a strong one survives
+
+A segment spends its opening transitioning out of the previous motion, so it has less time left for its own action. A prompt with margin absorbs that; a marginal one does not:
+
+| Prompt | Standalone | In a timeline |
+|---|---|---|
+| `a person jumps forward and lands on both feet` | 0.217 | 0.122 |
+| `a person leaps high into the air with both feet off the ground` | 0.940 | **0.900** |
+| `a person stands up and turns around` (no transition beat before it) | -173 deg | **+18 deg** |
+| `a person turns around to face the opposite direction` (after its own transition beat) | -193 deg | **-186 deg** |
+
+The strong versions keep about 96% of their standalone result. The weak ones lose most of it. So a timeline does not dilute everything by a fixed amount, it exposes prompts that had no margin to begin with.
+
+This is not caused by whatever precedes the segment: after a neutral standing segment the turn still managed only -73 deg, versus -64 deg after a deep squat.
+
+**So validate a beat standalone first, then assemble.** If it is marginal alone it will disappear in a suite.
+
+### Fix a weak segment by splitting it, not by lengthening it
+
+Duration is beat-dependent, so there is no general rule:
+
+| Fix | Result |
+|---|---|
+| turn as one 2.25 s segment | -64 deg |
+| turn as one 3.50 s segment | -154 deg |
+| `stands up from a squat` + `turns around to face the opposite direction` | **-193 deg** |
+
+Splitting beat the same total time spent on one segment. Note the opposite happens for ballistic actions: doubling the jump from 2.0 s to 4.0 s made it *worse* (0.217 to 0.145), because the model spreads the described action across whatever duration it is given.
+
+### The same prompt does not give the same take twice
+
+Kimodo is unseeded, so every generation is a different take and the run-to-run spread can be larger than any prompt change. The same jump prompt, in the same position, in suites whose preceding beats were identical:
+
+| Run | Airborne | Hip peak |
+|---|---|---|
+| generated alone | 0.940 | - |
+| in a suite | 0.900 | 1.468 |
+| in a suite, regenerated | **0.192** | **1.030** |
+
+Nothing changed but the take. A good prompt raises the average, it does not guarantee the result.
+
+So for anything you have to show or ship: **generate, measure the beat you care about, and regenerate if it came up weak.** Do not generate once and assume it holds. `force` bypasses the cache to get a fresh take of an identical request. Note the cache key covers the whole request, so re-rolling one beat of a timeline re-runs every frame of it.
+
+### Do not prompt for hand or finger detail
+
+Kimodo predicts on the 30-joint `somaskel30`, which strips most finger and hand detail, and converts to the 77-joint skeleton on output. Finger joints in the result are reconstructed, never predicted: `LeftHandIndex2` relative to `LeftHand` measured 0.09882 at frame 1 and 0.09883 at frame 100. Prompts about gestures, grips or finger poses cost generation time and change nothing. When retargeting, set **Blend Fingers** to 0 on Biped Retarget for the same reason.
 
 <!-- ENVIRONMENT VARIABLES -->
 ## Environment Variables

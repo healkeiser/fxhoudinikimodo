@@ -1,4 +1,4 @@
-"""SOMA77 skeleton data — the single source of truth shared by every kimodo_motion
+"""SOMA77 skeleton data \u2014 the single source of truth shared by every kimodo_motion
 cook script (emitted into the HDA's PythonModule section by create_hda.py).
 
 Swapping to a different skeleton means editing only this file.
@@ -30,7 +30,7 @@ SOMA77_PARENTS = [
     0,67,68,69,70,0,72,73,74,75,
 ]
 
-# World positions (meters, Y-up) — from kimodo/assets/skeletons/somaskel77/joints.p
+# World positions (meters, Y-up) - from kimodo/assets/skeletons/somaskel77/joints.p
 NEUTRAL_JOINTS = [
     [0.0,0.0,0.0],[-0.00013727,0.05003763,-0.00053727],[-0.00013727,0.12129064,-0.00083552],
     [-0.00013728,0.19679127,-0.00899523],[-0.00195404,0.45990422,-0.01452871],
