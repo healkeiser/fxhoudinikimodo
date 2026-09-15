@@ -451,7 +451,7 @@ class Canvas(QtWidgets.QWidget):
             i, _ = self._seg_at(pos)
             if i >= 0:
                 self._mode = None
-                self.edit_prompt(i)
+                self._later(lambda: self.edit_prompt(i))
         elif row == "track" and pos.x() >= GUTTER:
             # double-click on a track adds a key at that frame (or removes the one under the cursor)
             self._mode = None
@@ -470,8 +470,8 @@ class Canvas(QtWidgets.QWidget):
         if row == "prompt":
             i, _ = self._seg_at(pos)
             if i >= 0:
-                menu.addAction("Edit segment\u2026", lambda: self.edit_prompt(i))
-                menu.addAction("Add segment after", lambda: self.add_segment(after=i))
+                menu.addAction("Edit segment\u2026", lambda: self._later(lambda: self.edit_prompt(i)))
+                menu.addAction("Add segment after", lambda: self._later(lambda: self.add_segment(after=i)))
                 menu.addAction("Split at playhead", lambda: self.split_at(i, self.playhead))
                 menu.addSeparator()
                 one = menu.addAction("Regenerate this sequence\u2026",
@@ -486,7 +486,7 @@ class Canvas(QtWidgets.QWidget):
                 menu.addSeparator()
                 menu.addAction("Delete segment", lambda: self.remove_segment(i))
             else:
-                menu.addAction("Add segment at end", lambda: self.add_segment())
+                menu.addAction("Add segment at end", lambda: self._later(self.add_segment))
         elif row == "track":
             f = self.frame_at(pos.x())
             k = self._key_at(track, pos.x())
@@ -502,6 +502,7 @@ class Canvas(QtWidgets.QWidget):
         menu.addSeparator()
         menu.addAction("Fit timeline  (F)", self.fit)
         menu.exec(ev.globalPos())
+        menu.deleteLater()          # one menu was leaking per right-click
 
     def _scrub_to(self, x):
         """Move our own playhead and repaint straight away, then ask Houdini to follow.
@@ -513,9 +514,22 @@ class Canvas(QtWidgets.QWidget):
         self.frameRequested.emit(f)
 
     # -- model edits (each ends in one undoable write) ------------------------
+    def _later(self, fn):
+        """Run fn from the event loop rather than from inside the handler we are in.
+
+        Anything that opens a nested event loop (a modal dialog) or hands control to
+        Houdini (a progress dialog, a forced cook) must not do it during Qt event
+        dispatch. Houdini blocks mouse input to its own panes while it believes a modal
+        operation is running, and entering that state from inside a mouse handler, or
+        from inside QMenu.exec, leaves the block in place after the dialog has gone: the
+        panel keeps working because it is plain Qt, keyboard accelerators keep working,
+        and every pane of Houdini ignores the mouse.
+        """
+        QtCore.QTimer.singleShot(0, fn)
+
     def edit_prompt(self, i):
         seg = self.tl.segments[i]
-        dlg = PromptDialog(seg.prompt, seg.frames, self)
+        dlg = PromptDialog(seg.prompt, seg.frames, hou.qt.mainWindow())
         if dlg.exec() == QtWidgets.QDialog.Accepted:
             self.tl.set_prompt(i, dlg.text())
             if dlg.frames() != seg.frames:
@@ -524,7 +538,7 @@ class Canvas(QtWidgets.QWidget):
 
     def add_segment(self, after=None):
         default = self.tl.segments[after].frames if after is not None and self.tl.segments else int(round(3 * bridge.fps()))
-        dlg = PromptDialog("", default, self)
+        dlg = PromptDialog("", default, hou.qt.mainWindow())
         if dlg.exec() == QtWidgets.QDialog.Accepted:
             self.tl.add(dlg.text(), dlg.frames(), after=after)
             self._commit("add segment")
