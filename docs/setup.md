@@ -147,11 +147,22 @@ curl http://localhost:8001/health     # {"status":"ok","mock_mode":false}
 
 ## 6. Houdini Python packages
 
-None to install. The node only needs `requests` and `numpy`, both shipped inside Houdini, and
-the timeline panel's code is put on `PYTHONPATH` by the package file. Do **not** `pip install`
-into Houdini's Python or into your user site-packages: Houdini imports both, and a stray wheel
-there can crash Houdini at startup. Extra Python belongs in a folder added to `PYTHONPATH`
-through a Houdini package.
+One. The node only needs `requests` and `numpy`, both shipped inside Houdini, but the timeline
+panel imports Qt through [QtPy](https://pypi.org/project/QtPy/) so it does not care whether
+Houdini ships PySide2 or PySide6, and QtPy is not part of Houdini.
+
+Do **not** `pip install` it into Houdini's Python or into your user site-packages: Houdini
+imports both, and a stray wheel there can crash Houdini at startup. Extra Python belongs in a
+folder added to `PYTHONPATH` through a Houdini package, which is what `vendor/` is:
+
+```shell
+python -m pip install --target vendor --no-deps QtPy
+```
+
+QtPy ships as a pure-Python wheel (`py3-none-any`), so the Python you install it with does not
+have to be Houdini's. `--no-deps` is safe: its only runtime dependency is `packaging`, which
+Houdini already provides (24.2 in 22.0). `vendor/` is gitignored, and the package file appends
+it to `PYTHONPATH` alongside `houdini/python`.
 
 ## 7. Install & use the HDA
 

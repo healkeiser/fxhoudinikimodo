@@ -7,6 +7,9 @@ output/
 __pycache__/
 *.pyc
 
+# Third-party Python put on PYTHONPATH by the package file (see the setup guide).
+vendor/
+
 # Houdini (scene files only; unpacked .hda directories are tracked)
 *.hiplc
 *.hip

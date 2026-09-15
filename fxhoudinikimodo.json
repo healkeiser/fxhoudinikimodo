@@ -8,6 +8,12 @@
                 "method": "append",
                 "value": "$KIMODO_BRIDGE_ROOT/houdini/python"
             }
+        },
+        {
+            "PYTHONPATH": {
+                "method": "append",
+                "value": "$KIMODO_BRIDGE_ROOT/vendor"
+            }
         }
     ],
     "path": "$KIMODO_BRIDGE_ROOT/houdini"

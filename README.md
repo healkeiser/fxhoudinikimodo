@@ -152,9 +152,17 @@ On Windows, add a `.env` next to the compose file with `HF_HOME=C:/Users/<you>/.
 
 ### Houdini
 
-No Python packages to install: the node uses `requests` and `numpy`, which ship with Houdini,
-and the timeline panel's code is put on `PYTHONPATH` by the package file. Never `pip install`
-into Houdini's Python or your user site-packages.
+The node uses `requests` and `numpy`, which ship with Houdini. The panel needs
+[QtPy](https://pypi.org/project/QtPy/), which does not, so put it in `vendor/`, which the
+package file adds to `PYTHONPATH`. Never `pip install` into Houdini's Python or your user
+site-packages.
+
+```shell
+python -m pip install --target vendor --no-deps QtPy
+```
+
+QtPy is a pure-Python wheel, so any Python 3.7+ can install it; `--no-deps` is safe because
+its only runtime dependency, `packaging`, already ships with Houdini.
 
 Copy `fxhoudinikimodo.json` into `$HOUDINI_USER_PREF_DIR/packages/` and set `KIMODO_BRIDGE_ROOT` in it to this repo's absolute path. Restart Houdini. The node appears under **Tab ▸ Kimodo**.
 
