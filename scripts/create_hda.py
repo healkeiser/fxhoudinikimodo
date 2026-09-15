@@ -38,7 +38,7 @@ def _skin_sections():
     missing = [p for p in (_SKIN_BGEO, _APOSE_BGEO) if not os.path.exists(p)]
     if missing:
         raise FileNotFoundError(
-            "Missing embedded geometry — run `hython scripts/build_skin.py` first:\n  "
+            "Missing embedded geometry \u2014 run `hython scripts/build_skin.py` first:\n  "
             + "\n  ".join(missing)
         )
     return {
@@ -83,7 +83,7 @@ def _cook():
 
     npz_path = hda_node.parm("npz_path").eval()
     if not npz_path:
-        return  # no NPZ yet — output empty geometry, wait for Generate
+        return  # no NPZ yet - output empty geometry, wait for Generate
 
     geo = node.geometry()
     data        = np.load(npz_path)
@@ -395,21 +395,36 @@ else:
         hou.ui.setStatusMessage("Kimodo: generation started, watch the node's Status field.",
                                 severity=hou.severityType.ImportantMessage)
 
-    def _poll():
-        # HOM/UI calls are not thread-safe: marshal them to the main thread.
+    def _poll(op=None):
+        # HOM/UI calls are not thread-safe: marshal them to the main thread. With `op` set we
+        # are already ON the main thread (Wait for Result), so call straight through -- the
+        # marshalling would deadlock against our own blocking loop.
         import hdefereval, os
+        if op is None:
+            def _main(fn):
+                return hdefereval.executeInMainThreadWithResult(fn)
+            def _statusbar(text, severity=hou.severityType.ImportantMessage):
+                if hou.isUIAvailable():
+                    hdefereval.executeDeferred(lambda: hou.ui.setStatusMessage(text, severity=severity))
+        else:
+            def _main(fn):
+                return fn()
+            def _statusbar(text, severity=hou.severityType.ImportantMessage):
+                hou.ui.setStatusMessage(text, severity=severity)
         def _set(parm, val):
-            hdefereval.executeInMainThreadWithResult(lambda: node.parm(parm).set(val))
+            _main(lambda: node.parm(parm).set(val))
         def _fail(text):
-            hdefereval.executeInMainThreadWithResult(lambda: fail(text))
-        def _statusbar(text, severity=hou.severityType.ImportantMessage):
-            if hou.isUIAvailable():
-                hdefereval.executeDeferred(lambda: hou.ui.setStatusMessage(text, severity=severity))
+            _main(lambda: fail(text))
+        interval = 1.0 if op is not None else 5.0
+        last_prog = 0.0
         fails = 0
         while True:
-            time.sleep(5)
+            time.sleep(interval)
+            # also services the dialog's Cancel button; raises hou.OperationInterrupted
+            if op is not None:
+                op.updateProgress(last_prog)
             # stop if a newer Generate has replaced this job
-            if hdefereval.executeInMainThreadWithResult(lambda: node.parm("job_id").eval()) != job_id:
+            if _main(lambda: node.parm("job_id").eval()) != job_id:
                 break
             try:
                 r = requests.get(f"{url}/jobs/{job_id}", timeout=10)
@@ -433,6 +448,10 @@ else:
             if status == "done":
                 frames, joints = data["frames"], data["joints"]
                 done_label = f"Done{elapsed_str}" + (" (cached)" if data.get("cached") else "")
+                if op is not None:
+                    last_prog = 1.0
+                    op.updateProgress(1.0)
+                    op.updateLongProgress(percentage=1.0, long_op_status="Downloading")
                 try:
                     _set("status", f"Downloading...{elapsed_str}")
                     os.makedirs(download_dir, exist_ok=True)
@@ -457,7 +476,7 @@ else:
                     node.parm("npz_path").set(local_npz)
                     node.parm("job_id").set("")
                     node.cook(force=True)
-                hdefereval.executeInMainThreadWithResult(_finish)
+                _main(_finish)
                 _statusbar(f"Kimodo: generated {frames} frames ({joints} joints){elapsed_str}.")
                 break
             elif status == "failed":
@@ -469,12 +488,37 @@ else:
             else:
                 prog, phase = data.get("progress"), data.get("phase")
                 if prog is not None:
-                    _set("progress", float(prog))
-                    _set("status", f"Running {int(prog * 100):d}%" + (f" · {phase}" if phase else "") + elapsed_str)
+                    last_prog = float(prog)
+                    _set("progress", last_prog)
+                    label = f"Running {int(prog * 100):d}%" + (f" \u00b7 {phase}" if phase else "") + elapsed_str
+                    _set("status", label)
+                    if op is not None:
+                        op.updateProgress(last_prog)
+                        op.updateLongProgress(percentage=last_prog, long_op_status=label)
                 else:
-                    _set("status", f"Running...{elapsed_str}")
+                    label = f"Running...{elapsed_str}"
+                    _set("status", label)
+                    if op is not None:
+                        op.updateLongProgress(long_op_status=label)
 
-    threading.Thread(target=_poll, daemon=True).start()
+    if bool(node.parm("wait_for_result").eval()) and hou.isUIAvailable():
+        # Blocking mode: the same loop, on the main thread, behind Houdini's standard
+        # progress dialog. Cancel maps onto the server's own cancel endpoint.
+        try:
+            with hou.InterruptableOperation("Kimodo", "Generating motion",
+                                            open_interrupt_dialog=True) as op:
+                _poll(op)
+        except hou.OperationInterrupted:
+            node.parm("status").set("Cancelling...")
+            try:
+                requests.post(f"{url}/jobs/{job_id}/cancel", timeout=10)
+            except Exception as e:
+                node.parm("status").set(f"Cancel failed: {e}")
+            else:
+                node.parm("status").set("Cancelled")
+            node.parm("job_id").set("")
+    else:
+        threading.Thread(target=_poll, daemon=True).start()
 """
 
 # Cancel is identical for both HDAs (same server endpoint).
@@ -519,7 +563,7 @@ hou.ui.setStatusMessage("Kimodo: " + msg, severity=sev)
 
 # Build a standalone A-pose rig to pose for full-body / end-effector constraints.
 # It loads the HDA's embedded apose section by *type name*, so it's independent of this
-# node's outputs — no output-into-its-own-input loop. Wired into input 1 ready to pose.
+# node's outputs - no output-into-its-own-input loop. Wired into input 1 ready to pose.
 _MAKE_RIG_CB = r"""
 import hou
 
@@ -594,7 +638,7 @@ for i, parent in enumerate(SOMA77_PARENTS):
 
 # Cook script for an output that loads geometry embedded in the HDA as a section
 # (used for the A-pose skeleton and the skin mesh). Reads the section bytes from
-# the HDA definition, writes them to a temp file, and loads them — avoids opdef:
+# the HDA definition, writes them to a temp file, and loads them - avoids opdef:
 # path resolution and keeps the HDA self-contained.
 _SECTION_LOADER = '''import os, base64, tempfile, hou
 node = hou.pwd()
@@ -644,18 +688,52 @@ if tab is not None:
 """
 
 # Runs when a node of this type is created: generator shape, default colour.
+_DETACH_CB = r"""
+import json, hou
+
+node = kwargs["node"]
+raw  = node.parm("timeline_json").eval().strip()
+first = ""
+if raw:
+    try:
+        segs = (json.loads(raw) or {}).get("segments") or []
+        if segs:
+            first = str(segs[0].get("prompt", "")).strip()
+    except Exception:
+        pass                      # unreadable timeline: still detach, just keep the old prompt
+with hou.undos.group("Kimodo timeline detach"):
+    if first:
+        node.parm("prompt").set(first)
+    node.parm("timeline_json").set("")
+    node.parm("has_timeline").set(0)
+if hou.isUIAvailable():
+    hou.ui.setStatusMessage("Kimodo: timeline detached, Prompt and Duration are live again.",
+                            severity=hou.severityType.ImportantMessage)
+"""
+
+
 _ON_CREATED = r"""
 kwargs["node"].setUserData("nodeshape", "bulge")
 """
 
 _PROMPT_HELP = (
-    "What the character does, in plain <b>English</b>. Be specific about body part, "
-    "direction, speed and style.<br><br>"
-    "<b>Examples</b><br>"
-    "<i>a person walks forward slowly</i><br>"
-    "<i>someone jogs in a circle then stops</i><br>"
-    "<i>a person waves with the right hand, then bows</i><br>"
-    "<i>a tired person sits down on a chair</i>"
+    "What the character does, in plain __English__. Be specific about body part, "
+    "direction, speed and style.\n\n"
+    "__Name the body mechanics, not the intent.__ This matters more than any parameter "
+    "on this node. Measured: _a person jumps forward and lands on both feet_ gets both "
+    "feet 0.22 off the ground; _a person leaps high into the air with both feet off the "
+    "ground_ gets 0.94. Same model, same duration, 4.3x the result.\n\n"
+    "__Examples__\n"
+    "_a person walks forward slowly_\n"
+    "_someone jogs in a circle then stops_\n"
+    "_a person leaps high into the air with both feet off the ground_\n"
+    "_a person squats down deeply, knees bent, hips near the floor_\n\n"
+    "__Do not prompt for finger or hand detail.__ Kimodo predicts on a 30-joint skeleton "
+    "that strips hand detail; the fingers you get back are reconstructed, never generated. "
+    "Set __Blend Fingers__ to 0 when retargeting, for the same reason."
+    "\n\nGreyed out while this node has a __timeline__: the segments in the Kimodo "
+    "Timeline panel are what gets generated, and this field is ignored. Press "
+    "__Detach timeline__ in the panel to go back to a single prompt."
 )
 
 
@@ -675,16 +753,24 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
     subnet = geo.createNode("subnet", node_name + "_subnet")
 
     # Both cook scripts read the SOMA77 data from the HDA's PythonModule section
-    # (added below) via hou.pwd().parent().type().hdaModule() — single source.
+    # (added below) via hou.pwd().parent().type().hdaModule() - single source.
     anim_sop = subnet.createNode("python", "animated_sop")
     anim_sop.parm("python").set(_COOK_SCRIPT)
     tpose_sop = subnet.createNode("python", "tpose_sop")
     tpose_sop.parm("python").set(_REST_SCRIPT)
 
+    # Houdini takes each output connector's colour from its internal Output SOP, so these
+    # match kinefx::characterio::2.0 and read the same way in the network editor.
+    # Index 1 (Capture Pose) is SideFX's default grey, so it is left alone.
+    OUT_COLORS = {0: (0.584, 0.776, 1.0),      # Rest Geometry  - light blue
+                  2: (0.976, 0.780, 0.263)}    # Animated Pose  - amber
+
     def _out(idx, src):
         o = subnet.createNode("output", "output%d" % idx)
         o.setInput(0, src)
         o.parm("outputidx").set(idx)
+        if idx in OUT_COLORS:
+            o.setColor(hou.Color(OUT_COLORS[idx]))
         return o
 
     if skin_sections:
@@ -745,43 +831,65 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
                      shelf.contents(), count=1)
         hda_def.addSection("Tools.shelf", xml)
 
-    # ── parameter interface ──────────────────────────────────────────────────
-    ptg = hou.ParmTemplateGroup()   # start fresh — no inherited subnet parms
+    # -- parameter interface --------------------------------------------------
+    ptg = hou.ParmTemplateGroup()   # start fresh - no inherited subnet parms
     always_off = '{ status != "__never__" }'   # disablewhen that is always true: read-only field
     timeline_owns = '{ has_timeline == 1 }'   # the Timeline panel drives these while it has data
+    no_timeline   = '{ has_timeline == 0 }'   # nothing to detach until there is one
 
-    # Tab: Generate — the everyday controls.
+    # Tab: Generate - the everyday controls.
     gen = hou.FolderParmTemplate("fld_generate", "Generate", folder_type=hou.folderType.Tabs)
     gen.addParmTemplate(hou.StringParmTemplate(
         "prompt", "Prompt", 1,
         default_value=("a person walks forward",),
         tags={"editor": "1", "editorlines": "4-8"},
+        disable_when=timeline_owns,
         help=_PROMPT_HELP,
     ))
     gen.addParmTemplate(hou.ButtonParmTemplate(
         "open_timeline", "Open Timeline",
         script_callback=_OPEN_TIMELINE_CB,
         script_callback_language=hou.scriptLanguage.Python,
-        help="Open the <b>Kimodo Timeline</b> panel for this node: prompt segments laid end to "
-             "end, transitions, and Full Body / hand / foot pose tracks.<br>While a timeline "
-             "exists it owns Duration and the pose parameters below.",
+        join_with_next=True,
+        help="Open the __Kimodo Timeline__ panel for this node: prompt segments laid end to "
+             "end, transitions, and Full Body / hand / foot pose tracks.\nWhile a timeline "
+             "exists it owns Prompt, Duration and the pose parameters below.\n\n"
+             "__A beat is weaker in a timeline than on its own.__ A segment spends its "
+             "opening transitioning out of the previous motion, so it has less time left for "
+             "its own action. Measured: _a person stands up and turns around_ turns 173 "
+             "deg generated alone, but only 18 deg as segment 6 of 8. Generate a beat on its "
+             "own first to check it works, then add it to the timeline.\n"
+             "If a segment comes out weak, __split it__ rather than lengthen it: as one "
+             "2.25 s segment that turn managed 64 deg, at 3.50 s it managed 154 deg, but split "
+             "into _stands up from a squat_ + _turns around to face the opposite "
+             "direction_ it managed 193 deg for the same total time.",
+    ))
+    gen.addParmTemplate(hou.ButtonParmTemplate(
+        "detach_timeline", "Detach Timeline",
+        script_callback=_DETACH_CB,
+        script_callback_language=hou.scriptLanguage.Python,
+        disable_when=no_timeline,
+        help="Drop the timeline and go back to a single __Prompt__ + __Duration__. The "
+             "first segment's text is kept as the Prompt so nothing is lost, and the whole "
+             "thing is one undo step.\nDisabled while this node has no timeline.",
     ))
     gen.addParmTemplate(hou.IntParmTemplate(
         "duration_frames", "Duration (frames)", 1,
         default_value=(72,),
         min=12, max=720, min_is_strict=False, max_is_strict=False,
         disable_when=timeline_owns,
-        help="Length of the clip in <b>scene frames</b> at the current <code>$FPS</code> "
-             "(<code>72</code> = 3 s at 24 fps).<br>Converted to seconds for Kimodo, which "
-             "generates at 30 fps; with <b>Retime to Scene FPS</b> on you get back exactly this "
+        help="Length of the clip in __scene frames__ at the current `$FPS` "
+             "(`72` = 3 s at 24 fps).\nConverted to seconds for Kimodo, which "
+             "generates at 30 fps; with __Retime to Scene FPS__ on you get back exactly this "
              "many frames.",
     ))
     gen.addParmTemplate(hou.MenuParmTemplate(
         "model", "Model",
         ("Kimodo-SOMA-RP-v1.1", "Kimodo-SOMA-SEED-v1.1", "Kimodo-SOMA-RP-v1"),
         default_value=0,
-        help="Kimodo checkpoint.<br><b>RP</b> conditions on a rest pose.<br><b>SEED</b> uses a "
-             "fixed seed for reproducible results.",
+        help="Kimodo checkpoint, named _Family-Skeleton-Dataset-version_.\n"
+             "__RP__ = Bones Rigplay 1 (~700 h of mocap), the recommended default.\n"
+             "__SEED__ = BONES-SEED (288 h, public data), weaker but the benchmark's reference.",
     ))
     gen.addParmTemplate(hou.ButtonParmTemplate(
         "generate", "Generate",
@@ -789,7 +897,7 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
         script_callback_language=hou.scriptLanguage.Python,
         join_with_next=True,
         help="Send the prompt to the server. Runs in the background; the node recooks when "
-             "the clip has downloaded.<br>Progress shows in <b>Status</b> and under the node.",
+             "the clip has downloaded.\nProgress shows in __Status__ and under the node.",
     ))
     gen.addParmTemplate(hou.ButtonParmTemplate(
         "cancel", "Cancel",
@@ -802,16 +910,24 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
         "force", "Force Regenerate",
         default_value=False,
         help="Bypass the server cache and run inference again even if an identical "
-             "<i>prompt + duration + model + constraints</i> was generated before.",
+             "_prompt + duration + model + constraints_ was generated before.",
+    ))
+    gen.addParmTemplate(hou.ToggleParmTemplate(
+        "wait_for_result", "Wait for Result",
+        default_value=False,
+        help="Block Houdini behind the standard progress dialog until the clip arrives, the way a "
+             "__File Cache__ does. __Cancel__ in that dialog cancels the job on the server.\n"
+             "Off (the default): the job runs in the background and you keep working; progress "
+             "shows in __Status__, under the node, and in the Kimodo Timeline panel.",
     ))
     gen.addParmTemplate(hou.StringParmTemplate(
         "status", "Status", 1,
         default_value=("",),
         disable_when=always_off,
-        help="Live job state: <code>Queued</code>, <code>Running (Ns)</code>, "
-             "<code>Downloading</code>, <code>Done (Ns)</code>, <code>Done (cached)</code>, "
-             "<code>Failed</code>, <code>Cancelled</code>.<br>Also shows the "
-             "<b>Test Connection</b> result.",
+        help="Live job state: `Queued`, `Running (Ns)`, "
+             "`Downloading`, `Done (Ns)`, `Done (cached)`, "
+             "`Failed`, `Cancelled`.\nAlso shows the "
+             "__Test Connection__ result.",
     ))
     gen.addParmTemplate(hou.StringParmTemplate(
         "clip_info", "Clip", 1,
@@ -821,7 +937,7 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
     ))
     ptg.append(gen)
 
-    # Tab: Constraints — optional steering.
+    # Tab: Constraints - optional steering.
     con = hou.FolderParmTemplate("fld_constraints", "Constraints", folder_type=hou.folderType.Tabs)
     # Collapsible groups instead of separators; group_default 1 = open, 0 = closed on creation.
     path = hou.FolderParmTemplate("grp_path", "Root Path (input 0)", folder_type=hou.folderType.Collapsible,
@@ -829,13 +945,13 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
     path.addParmTemplate(hou.IntParmTemplate(
         "path_waypoints", "Path Waypoints", 1,
         default_value=(8,), min=0, max=64, min_is_strict=True, max_is_strict=False,
-        help="A curve or points on input 0 become a <b>root2d</b> constraint: the root passes "
-             "through these XZ positions.<br>Without a <code>frame</code> attribute the curve is "
+        help="A curve or points on input 0 become a __root2d__ constraint: the root passes "
+             "through these XZ positions.\nWithout a `frame` attribute the curve is "
              "thinned to this many points by arc length and spread evenly over the clip, so the "
-             "model keeps room to slow down or stop between them. <code>0</code> = use every "
+             "model keeps room to slow down or stop between them. `0` = use every "
              "point (constant speed along the whole clip, which fights segments that should "
-             "stand still or fall, and a pelvis that glides instead of stepping).<br>Points "
-             "with an <code>int frame</code> attribute are waypoints at those scene frames, "
+             "stand still or fall, and a pelvis that glides instead of stepping).\nPoints "
+             "with an `int frame` attribute are waypoints at those scene frames, "
              "thinned the same way: use them to constrain only the part of the clip that "
              "should travel.",
     ))
@@ -856,9 +972,9 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
         default_value=("",),
         tags={"editor": "1", "editorlines": "3-8"},
         help="Optional inline Kimodo constraints JSON (a list of constraint dicts). "
-             "Takes precedence over <b>Constraints File</b>.<br><br><b>Example root path</b><br>"
-             '<code>[{"type": "root2d", "frame_indices": [0, 90], '
-             '"smooth_root_2d": [[0,0],[2,1]]}]</code>',
+             "Takes precedence over __Constraints File__.\n\n__Example root path__\n"
+             '`[{"type": "root2d", "frame_indices": [0, 90], '
+             '"smooth_root_2d": [[0,0],[2,1]]}]`',
     ))
     con.addParmTemplate(js)
     pose = hou.FolderParmTemplate("grp_pose", "Pose Keyframes (input 1)", folder_type=hou.folderType.Collapsible,
@@ -874,7 +990,7 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
         "pose_keyframes", "Pose Keyframes", 1,
         default_value=("",),
         disable_when=timeline_owns,
-        help="Frame numbers to sample the input-1 skeleton at, e.g. <code>0 45 89</code>.<br>"
+        help="Frame numbers to sample the input-1 skeleton at, e.g. `0 45 89`.\n"
              "Empty = no pose constraint. Disabled while the Timeline panel owns the keys.",
     ))
     pose.addParmTemplate(hou.MenuParmTemplate(
@@ -897,15 +1013,15 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
     con.addParmTemplate(pose)
     ptg.append(con)
 
-    # Tab: Output — timing and the clip file.
+    # Tab: Output - timing and the clip file.
     out = hou.FolderParmTemplate("fld_output", "Output", folder_type=hou.folderType.Tabs)
     out.addParmTemplate(hou.IntParmTemplate(
         "start_frame", "Start Frame", 1,
         default_expression=("$FSTART",),
         default_expression_language=(hou.scriptLanguage.Hscript,),
         min=-1000, max=1000, min_is_strict=False, max_is_strict=False,
-        help="Scene frame on which the clip begins.<br>The <b>first</b> sample holds before it, "
-             "the <b>last</b> sample holds after the clip ends.",
+        help="Scene frame on which the clip begins.\nThe __first__ sample holds before it, "
+             "the __last__ sample holds after the clip ends.",
     ))
     out.addParmTemplate(hou.StringParmTemplate(
         "npz_path", "NPZ Path", 1,
@@ -922,27 +1038,27 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
         "retime", "Retime to Scene FPS",
         default_value=True,
         help="Map clip samples onto scene frames so the clip keeps its real duration at any "
-             "<code>$FPS</code> (nearest sample, no blending).<br><b>Off</b> = one clip sample "
+             "`$FPS` (nearest sample, no blending).\n__Off__ = one clip sample "
              "per scene frame, so a 30 fps clip plays slow at 24 fps.",
     ))
     adv.addParmTemplate(hou.IntParmTemplate(
         "source_fps", "Clip FPS", 1,
         default_value=(_KIMODO_FPS,), min=1, max=120,
-        help="Frame rate Kimodo generated the clip at: <code>30</code> for the SOMA models.<br>"
-             "A property of the <b>model</b>, not of your scene. Do <b>not</b> set it to "
-             "<code>$FPS</code> or Retime becomes a no-op.",
+        help="Frame rate Kimodo generated the clip at: `30` for the SOMA models.\n"
+             "A property of the __model__, not of your scene. Do __not__ set it to "
+             "`$FPS` or Retime becomes a no-op.",
     ))
     out.addParmTemplate(adv)
     ptg.append(out)
 
-    # Tab: Server — set once.
+    # Tab: Server - set once.
     srv = hou.FolderParmTemplate("fld_server", "Server", folder_type=hou.folderType.Tabs)
     srv.addParmTemplate(hou.StringParmTemplate(
         "server_url", "API Server URL", 1,
         default_value=("http://localhost:8001",),
         join_with_next=True,
-        help="URL of the running <code>kimodo_server</code>, e.g. "
-             "<code>http://localhost:8001</code>.<br>Point at the GPU host if it runs elsewhere.",
+        help="URL of the running `kimodo_server`, e.g. "
+             "`http://localhost:8001`.\nPoint at the GPU host if it runs elsewhere.",
     ))
     srv.addParmTemplate(hou.ButtonParmTemplate(
         "test_connection", "Test Connection",
@@ -1004,6 +1120,6 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
     print(f"  parms: {[p.name() for p in hda_def.parmTemplateGroup().parmTemplates()]}")
 
 
-# ── build the HDA ────────────────────────────────────────────────────────────
+# -- build the HDA ------------------------------------------------------------
 build_hda("kimodo_motion", "Kimodo Motion Generator",
           _HDA_PATH, _GENERATE_CB, skin_sections=_skin_sections())
