@@ -549,6 +549,9 @@ class Canvas(QtWidgets.QWidget):
             loop.processEvents(QtCore.QEventLoop.AllEvents, 50)
         accepted = dlg.result() == QtWidgets.QDialog.Accepted
         text, count = dlg.text(), dlg.frames()
+        # deleteLater is enough. Measured in a live session: the dialog is gone once
+        # DeferredDelete is delivered, which Houdini's event loop does. (processEvents
+        # does not deliver it, which is only a hazard for tests that flush by hand.)
         dlg.deleteLater()
         return accepted, text, count
 
