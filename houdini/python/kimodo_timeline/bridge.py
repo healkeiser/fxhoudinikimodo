@@ -16,6 +16,21 @@ def find_node():
     return None
 
 
+def all_nodes():
+    """Every Kimodo Motion node in the scene, sorted by path."""
+    out = []
+    for name, nt in hou.sopNodeTypeCategory().nodeTypes().items():
+        if name.startswith(TYPE_PREFIX):
+            out.extend(nt.instances())
+    return sorted(out, key=lambda n: n.path())
+
+
+def node_at(path):
+    """The Kimodo Motion node at `path`, or None."""
+    n = hou.node(path) if path else None
+    return n if n is not None and n.type().name().startswith(TYPE_PREFIX) else None
+
+
 def has_timeline(node) -> bool:
     return bool(node.parm("timeline_json").eval().strip())
 
@@ -68,7 +83,11 @@ def current_frame() -> int:
 
 
 def set_frame(frame: int) -> None:
+    """Set the frame and let Houdini catch up. Without the update the viewport only
+    redraws once the mouse is released, so dragging the ruler does not read as scrubbing."""
     hou.setFrame(int(frame))
+    if hou.isUIAvailable():
+        hou.ui.triggerUpdate()
 
 
 def status(node) -> str:

@@ -12,9 +12,9 @@ import hou
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import bridge
-from .model import TRACKS, TRACK_LABELS, Timeline
+from .model import MIN_FRAMES, TRACKS, TRACK_LABELS, Timeline
 
-# ── layout constants (pixels) ──────────────────────────────────────────────────
+# -- layout constants (pixels) --------------------------------------------------
 GUTTER = 78          # track labels
 RULER_H = 22
 PROMPT_H = 46
@@ -37,21 +37,57 @@ WHITE = QtGui.QColor("#ffffff"); OUTSIDE = QtGui.QColor(0, 0, 0, 60)
 
 
 class PromptDialog(QtWidgets.QDialog):
-    def __init__(self, text: str, parent=None):
+    """Prompt plus duration. Frames and seconds are two views of one value, kept in sync."""
+
+    def __init__(self, text: str, frames: int, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Segment prompt")
-        self.resize(480, 160)
+        self.setWindowTitle("Segment")
+        self.resize(480, 200)
         lay = QtWidgets.QVBoxLayout(self)
         self.edit = QtWidgets.QPlainTextEdit(text)
-        self.edit.setPlaceholderText("What the character does, in English…")
+        self.edit.setPlaceholderText("What the character does, in English\u2026")
         lay.addWidget(self.edit)
+
+        row = QtWidgets.QHBoxLayout()
+        row.addWidget(QtWidgets.QLabel("Frames"))
+        self.frames_box = QtWidgets.QSpinBox()
+        self.frames_box.setRange(MIN_FRAMES, 100000)
+        self.frames_box.setValue(max(MIN_FRAMES, int(frames)))
+        self.frames_box.setToolTip("Segment length in Houdini frames.")
+        self.frames_box.valueChanged.connect(self._frames_changed)
+        row.addWidget(self.frames_box)
+        row.addSpacing(16)
+        row.addWidget(QtWidgets.QLabel("Seconds"))
+        self.secs_box = QtWidgets.QDoubleSpinBox()
+        self.secs_box.setDecimals(2); self.secs_box.setSingleStep(0.25)
+        self.secs_box.setRange(MIN_FRAMES / max(bridge.fps(), 1.0), 100000.0)
+        self.secs_box.setToolTip("The same length in seconds, at the scene FPS.")
+        self.secs_box.valueChanged.connect(self._secs_changed)
+        row.addWidget(self.secs_box)
+        row.addStretch(1)
+        lay.addLayout(row)
+        self._frames_changed(self.frames_box.value())
+
         btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
         btns.accepted.connect(self.accept); btns.rejected.connect(self.reject)
         lay.addWidget(btns)
         self.edit.setFocus()
 
+    def _frames_changed(self, v):
+        self.secs_box.blockSignals(True)
+        self.secs_box.setValue(v / max(bridge.fps(), 1.0))
+        self.secs_box.blockSignals(False)
+
+    def _secs_changed(self, v):
+        self.frames_box.blockSignals(True)
+        self.frames_box.setValue(max(MIN_FRAMES, int(round(v * bridge.fps()))))
+        self.frames_box.blockSignals(False)
+
     def text(self) -> str:
         return self.edit.toPlainText().strip()
+
+    def frames(self) -> int:
+        return int(self.frames_box.value())
 
 
 class Canvas(QtWidgets.QWidget):
@@ -81,7 +117,7 @@ class Canvas(QtWidgets.QWidget):
         self.setMinimumHeight(RULER_H + PROMPT_H + TRACK_H * len(TRACKS) + 8)
         self.setContextMenuPolicy(QtCore.Qt.DefaultContextMenu)
 
-    # ── view ─────────────────────────────────────────────────────────────────
+    # -- view -----------------------------------------------------------------
     def _work_w(self) -> float:
         return max(1.0, self.width() - GUTTER - PAD_R)
 
@@ -128,7 +164,7 @@ class Canvas(QtWidgets.QWidget):
         else:
             super().keyPressEvent(ev)
 
-    # ── geometry helpers ─────────────────────────────────────────────────────
+    # -- geometry helpers -----------------------------------------------------
     def _row_of(self, y: float):
         if y < RULER_H:
             return "ruler", None
@@ -161,7 +197,7 @@ class Canvas(QtWidgets.QWidget):
                 return k
         return None
 
-    # ── painting ─────────────────────────────────────────────────────────────
+    # -- painting -------------------------------------------------------------
     def paintEvent(self, ev):
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing)
@@ -186,7 +222,7 @@ class Canvas(QtWidgets.QWidget):
         if x_start > GUTTER:
             p.fillRect(QtCore.QRectF(GUTTER, RULER_H, x_start - GUTTER, h - RULER_H), OUTSIDE)
 
-        # ruler + grid: tick every N frames so labels stay ≥ 48 px apart
+        # ruler + grid: tick every N frames so labels stay >= 48 px apart
         step = 1200
         for cand in (1, 2, 5, 10, 12, 24, 25, 30, 48, 50, 60, 100, 120, 240, 300, 600):
             if cand * self._ppf >= 48:
@@ -199,14 +235,23 @@ class Canvas(QtWidgets.QWidget):
             p.setPen(TEXT); p.drawText(QtCore.QPointF(x + 3, RULER_H - 7), str(f))
             f += step
 
+        p.setPen(QtGui.QPen(QtGui.QColor(90, 90, 90), 1))
+        p.drawLine(QtCore.QPointF(GUTTER, RULER_H - 0.5), QtCore.QPointF(w - PAD_R, RULER_H - 0.5))
+
         # segments
         rects = self._seg_rects()
         for i, r in enumerate(rects):
             col = SEG_COLORS[i % len(SEG_COLORS)]
             if self._mode == "move" and i == self._idx:
                 col = QtGui.QColor(col); col.setAlpha(110)
-            p.setPen(QtCore.Qt.NoPen); p.setBrush(col)
-            p.drawRoundedRect(r.adjusted(1, 0, -1, 0), 4, 4)
+            rr = r.adjusted(1, 0, -1, 0)
+            grad = QtGui.QLinearGradient(rr.topLeft(), rr.bottomLeft())
+            grad.setColorAt(0.0, col.lighter(116))
+            grad.setColorAt(1.0, col.darker(114))
+            p.setPen(QtCore.Qt.NoPen); p.setBrush(QtGui.QBrush(grad))
+            p.drawRoundedRect(rr, 5, 5)
+            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 38), 1)); p.setBrush(QtCore.Qt.NoBrush)
+            p.drawRoundedRect(rr.adjusted(0.5, 0.5, -0.5, -0.5), 5, 5)
             seg = self.tl.segments[i]
             secs = seg.frames / bridge.fps()
             txt = QtCore.QRectF(r.left() + 6, r.top() + 2, max(0, r.width() - 12), r.height() - 4)
@@ -215,7 +260,7 @@ class Canvas(QtWidgets.QWidget):
                 p.drawText(txt, QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop | QtCore.Qt.TextSingleLine,
                            p.fontMetrics().elidedText(seg.prompt or "(empty prompt)", QtCore.Qt.ElideRight, int(txt.width())))
                 p.setPen(QtGui.QColor(255, 255, 255, 170))
-                p.drawText(txt, QtCore.Qt.AlignLeft | QtCore.Qt.AlignBottom, f"{seg.frames} f · {secs:.2f} s")
+                p.drawText(txt, QtCore.Qt.AlignLeft | QtCore.Qt.AlignBottom, f"{seg.frames} f \u00b7 {secs:.2f} s")
             p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 120), 2))
             gx = r.right() - 3
             p.drawLine(QtCore.QPointF(gx, r.top() + 8), QtCore.QPointF(gx, r.bottom() - 8))
@@ -233,10 +278,13 @@ class Canvas(QtWidgets.QWidget):
             p.setPen(QtGui.QPen(WHITE, 3))
             p.drawLine(QtCore.QPointF(x, RULER_H + 2), QtCore.QPointF(x, RULER_H + PROMPT_H - 2))
 
-        # keys
+        # keys (and a hint on empty tracks)
         for t in TRACKS:
             y = self._track_y(t)
             col = TRACK_COLORS[t]
+            if not self.tl.tracks.get(t) and t == TRACKS[0]:
+                p.setPen(QtGui.QColor(120, 120, 120))
+                p.drawText(QtCore.QPointF(GUTTER + 8, y + 4), "double-click or right-click a track to add a pose key")
             for k in self.tl.tracks.get(t, []):
                 x = self.x_of(k)
                 path = QtGui.QPainterPath()
@@ -247,11 +295,11 @@ class Canvas(QtWidgets.QWidget):
         x = self.x_of(self.playhead)
         p.setPen(QtGui.QPen(PLAYHEAD, 2)); p.drawLine(QtCore.QPointF(x, 0), QtCore.QPointF(x, h))
         p.setBrush(PLAYHEAD); p.setPen(QtCore.Qt.NoPen)
-        p.drawRect(QtCore.QRectF(x - 14, 2, 28, RULER_H - 6))
-        p.setPen(WHITE); p.drawText(QtCore.QRectF(x - 14, 2, 28, RULER_H - 6), QtCore.Qt.AlignCenter, str(self.playhead))
+        p.drawRoundedRect(QtCore.QRectF(x - 15, 2, 30, RULER_H - 6), 3, 3)
+        p.setPen(WHITE); p.drawText(QtCore.QRectF(x - 15, 2, 30, RULER_H - 6), QtCore.Qt.AlignCenter, str(self.playhead))
         p.end()
 
-    # ── mouse ────────────────────────────────────────────────────────────────
+    # -- mouse ----------------------------------------------------------------
     def mousePressEvent(self, ev):
         pos = ev.position()
         if ev.button() == QtCore.Qt.MiddleButton:
@@ -260,7 +308,7 @@ class Canvas(QtWidgets.QWidget):
             return super().mousePressEvent(ev)
         row, track = self._row_of(pos.y())
         if row == "ruler":
-            self._mode = "scrub"; self.frameRequested.emit(self.frame_at(pos.x())); return
+            self._mode = "scrub"; self._scrub_to(pos.x()); return
         if row == "prompt":
             i, r = self._seg_at(pos)
             if i >= 0:
@@ -279,7 +327,7 @@ class Canvas(QtWidgets.QWidget):
         if self._mode == "pan":
             self.pan(pos.x() - self._pan_x); self._pan_x = pos.x(); return
         if self._mode == "scrub":
-            self.frameRequested.emit(self.frame_at(pos.x())); return
+            self._scrub_to(pos.x()); return
         if self._mode == "resize":
             st = self.tl.starts(self.start)[self._idx]
             self.tl.resize(self._idx, self.frame_at(pos.x()) - st)
@@ -326,12 +374,20 @@ class Canvas(QtWidgets.QWidget):
 
     def mouseDoubleClickEvent(self, ev):
         pos = ev.position()
-        row, _ = self._row_of(pos.y())
+        row, track = self._row_of(pos.y())
         if row == "prompt":
             i, _ = self._seg_at(pos)
             if i >= 0:
                 self._mode = None
                 self.edit_prompt(i)
+        elif row == "track" and pos.x() >= GUTTER:
+            # double-click on a track adds a key at that frame (or removes the one under the cursor)
+            self._mode = None
+            k = self._key_at(track, pos.x())
+            if k is None:
+                self.add_key(track, self.frame_at(pos.x()))
+            else:
+                self.remove_key(track, k)
         elif row == "ruler":
             self.fit()
 
@@ -342,7 +398,7 @@ class Canvas(QtWidgets.QWidget):
         if row == "prompt":
             i, _ = self._seg_at(pos)
             if i >= 0:
-                menu.addAction("Edit prompt…", lambda: self.edit_prompt(i))
+                menu.addAction("Edit segment\u2026", lambda: self.edit_prompt(i))
                 menu.addAction("Add segment after", lambda: self.add_segment(after=i))
                 menu.addAction("Split at playhead", lambda: self.split_at(i, self.playhead))
                 menu.addSeparator()
@@ -365,17 +421,30 @@ class Canvas(QtWidgets.QWidget):
         menu.addAction("Fit timeline  (F)", self.fit)
         menu.exec(ev.globalPos())
 
-    # ── model edits (each ends in one undoable write) ────────────────────────
+    def _scrub_to(self, x):
+        """Move our own playhead and repaint straight away, then ask Houdini to follow.
+        Waiting for the 400 ms tick to pick the frame up is what made dragging feel dead."""
+        f = self.frame_at(x)
+        if f != self.playhead:
+            self.playhead = f
+            self.update()
+        self.frameRequested.emit(f)
+
+    # -- model edits (each ends in one undoable write) ------------------------
     def edit_prompt(self, i):
-        dlg = PromptDialog(self.tl.segments[i].prompt, self)
+        seg = self.tl.segments[i]
+        dlg = PromptDialog(seg.prompt, seg.frames, self)
         if dlg.exec() == QtWidgets.QDialog.Accepted:
-            self.tl.set_prompt(i, dlg.text()); self.edited.emit("Kimodo timeline: edit prompt"); self.update()
+            self.tl.set_prompt(i, dlg.text())
+            if dlg.frames() != seg.frames:
+                self.tl.resize(i, dlg.frames()); self.tl.clamp_keys(self.start)
+            self.edited.emit("Kimodo timeline: edit segment"); self.update()
 
     def add_segment(self, after=None):
-        dlg = PromptDialog("", self)
+        default = self.tl.segments[after].frames if after is not None and self.tl.segments else int(round(3 * bridge.fps()))
+        dlg = PromptDialog("", default, self)
         if dlg.exec() == QtWidgets.QDialog.Accepted:
-            default = self.tl.segments[after].frames if after is not None and self.tl.segments else int(round(3 * bridge.fps()))
-            self.tl.add(dlg.text(), default, after=after)
+            self.tl.add(dlg.text(), dlg.frames(), after=after)
             self.edited.emit("Kimodo timeline: add segment"); self.update()
 
     def split_at(self, i, frame):
@@ -410,14 +479,21 @@ class TimelineWidget(QtWidgets.QWidget):
         super().__init__(parent)
         self.node = None
         self._last_json = None
+        self._last_selected = None
 
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(6, 6, 6, 6); lay.setSpacing(6)
 
         head = QtWidgets.QHBoxLayout()
-        self.node_label = QtWidgets.QLabel("Select a Kimodo Motion node")
-        self.node_label.setStyleSheet("font-weight: bold")
-        head.addWidget(self.node_label); head.addStretch(1)
+        self.node_combo = QtWidgets.QComboBox()
+        self.node_combo.setMinimumWidth(240)
+        self.node_combo.setToolTip("Kimodo Motion nodes in this scene. Pick one to edit its timeline; "
+                                   "selecting a node in the network editor also switches here.")
+        self.node_combo.activated.connect(self._combo_picked)
+        head.addWidget(self.node_combo)
+        self.warn_label = QtWidgets.QLabel("")
+        self.warn_label.setStyleSheet("font-weight: bold; color: #e0a030")
+        head.addWidget(self.warn_label); head.addStretch(1)
         self.detach_btn = QtWidgets.QPushButton("Detach timeline")
         self.detach_btn.setToolTip("Drop the timeline and go back to the node's Prompt + Duration. Undoable.")
         self.detach_btn.clicked.connect(self._detach)
@@ -425,8 +501,8 @@ class TimelineWidget(QtWidgets.QWidget):
         lay.addLayout(head)
 
         self.canvas = Canvas(self)
-        self.canvas.setToolTip("Wheel: zoom · Middle-drag: pan · F: fit · Drag block edge: resize · Drag block: reorder · "
-                               "Double-click: edit · Right-click: add / split / delete")
+        self.canvas.setToolTip("Wheel: zoom \u00b7 Middle-drag: pan \u00b7 F: fit \u00b7 Drag block edge: resize \u00b7 Drag block: reorder \u00b7 "
+                               "Double-click: edit prompt + length \u00b7 Right-click: add / split / delete")
         self.canvas.edited.connect(self._write)
         self.canvas.frameRequested.connect(bridge.set_frame)
         lay.addWidget(self.canvas, 1)
@@ -439,8 +515,22 @@ class TimelineWidget(QtWidgets.QWidget):
         foot.addWidget(self.transition)
         foot.addSpacing(16)
         self.total_label = QtWidgets.QLabel("")
+        self.total_label.setTextFormat(QtCore.Qt.RichText)
+        self.total_label.setToolTip("First and last scene frame this timeline occupies, "
+                                    "from the node's Start Frame.")
         foot.addWidget(self.total_label)
         foot.addStretch(1)
+        self.key_track = QtWidgets.QComboBox()
+        for t in TRACKS:
+            self.key_track.addItem(TRACK_LABELS[t], t)
+        self.key_track.setToolTip("Track for Add Key")
+        foot.addWidget(self.key_track)
+        self.key_btn = QtWidgets.QPushButton("Add Key at Playhead")
+        self.key_btn.setToolTip("Add a pose key on the chosen track at the current Houdini frame. "
+                                "Also: double-click a track row, or right-click it.")
+        self.key_btn.clicked.connect(lambda: self.canvas.add_key(self.key_track.currentData(), self.canvas.playhead))
+        foot.addWidget(self.key_btn)
+        foot.addSpacing(12)
         self.fit_btn = QtWidgets.QPushButton("Fit"); self.fit_btn.setToolTip("Show the whole timeline (F)")
         self.fit_btn.clicked.connect(self.canvas.fit)
         foot.addWidget(self.fit_btn)
@@ -454,7 +544,11 @@ class TimelineWidget(QtWidgets.QWidget):
         self.cancel_btn = QtWidgets.QPushButton("Cancel"); self.cancel_btn.clicked.connect(lambda: self.node and bridge.cancel(self.node))
         foot.addWidget(self.cancel_btn)
         self.gen_btn = QtWidgets.QPushButton("Generate"); self.gen_btn.setDefault(True)
-        self.gen_btn.setStyleSheet("font-weight: bold; padding: 4px 18px")
+        # No stylesheet here: any stylesheet on a QPushButton hands rendering to
+        # QStyleSheetStyle, which draws the CSS box model and drops Houdini's native
+        # button background. Get bold and width the native way so the chrome survives.
+        _f = self.gen_btn.font(); _f.setBold(True); self.gen_btn.setFont(_f)
+        self.gen_btn.setMinimumWidth(110)
         self.gen_btn.clicked.connect(self._generate)
         foot.addWidget(self.gen_btn)
         lay.addLayout(foot)
@@ -463,32 +557,55 @@ class TimelineWidget(QtWidgets.QWidget):
         self._timer.timeout.connect(self._tick); self._timer.start()
         self._tick()
 
-    # ── binding ──────────────────────────────────────────────────────────────
+    # -- binding --------------------------------------------------------------
+    def _sync_combo(self):
+        """Refresh the node list without disturbing the current pick."""
+        paths = [n.path() for n in bridge.all_nodes()]
+        if paths == [self.node_combo.itemData(i) for i in range(self.node_combo.count())]:
+            return
+        self.node_combo.blockSignals(True)
+        self.node_combo.clear()
+        for p in paths:
+            self.node_combo.addItem(p, p)
+        self.node_combo.blockSignals(False)
+
+    def _combo_picked(self, index):
+        node = bridge.node_at(self.node_combo.itemData(index))
+        if node is not None and (self.node is None or node.path() != self.node.path()):
+            self._load(node)
+
     def _tick(self):
-        node = bridge.find_node()
         try:
-            if node is not None and self.node is not None and node.path() == self.node.path():
-                # external change (undo, manual parm edit)? reload, keep the view
-                raw = node.parm("timeline_json").eval()
-                if raw != self._last_json:
-                    self._load(node, keep_view=True)
-            elif node is not None:
-                self._load(node)
-            elif self.node is not None:
-                try:
-                    self.node.path()          # raises if the node was deleted
-                except hou.ObjectWasDeleted:
-                    self.node = None
+            self._sync_combo()
+            # Only a *new* network-editor selection switches the panel, so a pick made
+            # in the combo stands and either Kimodo node can be driven from this panel.
+            sel = bridge.find_node()
+            sel_path = sel.path() if sel is not None else None
+            if sel_path is not None and sel_path != self._last_selected:
+                self._load(sel)
+            self._last_selected = sel_path
+            if self.node is None and self.node_combo.count():
+                first = bridge.node_at(self.node_combo.itemData(0))
+                if first is not None:
+                    self._load(first)
+            if self.node is not None:
+                self.node.path()              # raises if the node was deleted
+                raw = self.node.parm("timeline_json").eval()
+                if raw != self._last_json:    # external change (undo, manual parm edit)
+                    self._load(self.node, keep_view=True)
         except Exception:
             self.node = None
         enabled = self.node is not None
-        for w in (self.canvas, self.transition, self.gen_btn, self.cancel_btn, self.detach_btn, self.fit_btn):
+        for w in (self.canvas, self.transition, self.gen_btn, self.cancel_btn, self.detach_btn, self.fit_btn, self.key_btn, self.key_track):
             w.setEnabled(enabled)
         if not enabled:
-            self.node_label.setText("Select a Kimodo Motion node"); self.node_label.setStyleSheet("font-weight: bold")
+            self.warn_label.setText("")
             self.status_label.setText(""); return
         self.canvas.playhead = bridge.current_frame()
-        self.canvas.start = bridge.start_frame(self.node)
+        new_start = bridge.start_frame(self.node)
+        if new_start != self.canvas.start:      # Start Frame moved on the node
+            self.canvas.start = new_start
+            self._refresh_total()
         self.canvas.update()
         self.status_label.setText(bridge.status(self.node))
         prog = bridge.progress(self.node)
@@ -496,14 +613,16 @@ class TimelineWidget(QtWidgets.QWidget):
         if prog is not None:
             self.progress.setValue(int(prog * 1000))
         self.detach_btn.setVisible(bridge.has_timeline(self.node))
+        i = self.node_combo.findData(self.node.path())
+        if i >= 0 and i != self.node_combo.currentIndex():
+            self.node_combo.blockSignals(True)
+            self.node_combo.setCurrentIndex(i)
+            self.node_combo.blockSignals(False)
         # Pose keys need a posed rig on input 1; say so before Generate has to refuse.
         has_keys = any(self.canvas.tl.tracks.get(t) for t in self.canvas.tl.tracks)
-        if has_keys and self.node.input(1) is None:
-            self.node_label.setText(f"{self.node.path()}   ⚠ pose keys need a posed skeleton on input 1 (Create Pose Rig)")
-            self.node_label.setStyleSheet("font-weight: bold; color: #e0a030")
-        else:
-            self.node_label.setText(self.node.path())
-            self.node_label.setStyleSheet("font-weight: bold")
+        self.warn_label.setText(
+            "\u26a0 pose keys need a posed skeleton on input 1 (Create Pose Rig)"
+            if has_keys and self.node.input(1) is None else "")
 
     def _load(self, node, keep_view=False):
         self.node = node
@@ -517,7 +636,11 @@ class TimelineWidget(QtWidgets.QWidget):
 
     def _refresh_total(self):
         tl = self.canvas.tl
-        self.total_label.setText(f"Total {tl.total_frames} frames · {tl.total_frames / bridge.fps():.2f} s · {len(tl.segments)} segment(s)")
+        first = self.canvas.start
+        last = first + tl.total_frames - 1 if tl.total_frames else first
+        self.total_label.setText(
+            f"Frames <b>{first}</b>–<b>{last}</b>   {tl.total_frames} f \u00b7 "
+            f"{tl.total_frames / bridge.fps():.2f} s \u00b7 {len(tl.segments)} segment(s)")
 
     def _write(self, label="Kimodo timeline edit"):
         if self.node is None:
