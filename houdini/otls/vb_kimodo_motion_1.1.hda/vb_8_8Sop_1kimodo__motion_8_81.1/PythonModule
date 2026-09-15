@@ -214,8 +214,11 @@ def rebuild_segments(node):
 
 def refresh_starts(node):
     """Fill each instance's read-only first and last scene frame."""
+    start = node.parm("start_frame")
+    if start is None:                    # never take the node down over a display field
+        return
     segs = read_timeline(node).get("segments") or []
-    f = int(node.parm("start_frame").eval())
+    f = int(start.eval())
     for i, sg in enumerate(segs, start=1):
         a, b = node.parm("seg_from%d" % i), node.parm("seg_to%d" % i)
         if a is None or b is None:

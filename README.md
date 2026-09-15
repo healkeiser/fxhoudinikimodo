@@ -118,7 +118,10 @@ Two halves: a **Docker server** that runs Kimodo, and a **Houdini package** that
 
 - **Houdini** 20.5+ (developed on 22.0.368)
 - **Docker Desktop** with the WSL2 backend and GPU support on Windows, or Docker Engine + NVIDIA Container Toolkit on Linux
-- **NVIDIA GPU**, 4 GB VRAM minimum, 6 GB if Houdini shares the card
+- **NVIDIA GPU**. How much VRAM and RAM you need depends on where you run the text encoder, which is the largest thing Kimodo loads. Pick one before installing, see [Where to run the text encoder](#where-to-run-the-text-encoder):
+  - encoder on **CPU** (the default): about 4 GB VRAM, 6 GB if Houdini shares the card, but **~14 GB of system RAM**, and text encoding becomes the slowest part of every generation
+  - encoder on **GPU**: about **17 GB VRAM**, plus whatever your viewport needs, and generation is much faster
+- **RAM**: 16 GB is enough with the encoder on GPU; budget 32 GB with it on CPU
 - **~50 GB disk**: the CUDA base image alone is 35 GB, plus model weights and the Hugging Face cache
 - A **Hugging Face** account. The text encoder is built on Meta's Llama 3 8B Instruct, which is gated; see the setup guide for the mirror route if Meta declines your request.
 
@@ -269,6 +272,47 @@ Read by `docker-compose.bridge.yaml`:
 | `MOCK_MODE` | `0` | `1` serves `output/dev_reference.npz` without inference, for HDA work without a GPU. |
 | `HF_HUB_OFFLINE` | `1` | Load weights from the local cache only; set `0` for a one-time download. |
 | `TEXT_ENCODERS_DIR` | — | Local folder of LLM2Vec adapters, when you cannot pull Meta's repo directly. |
+| `TEXT_ENCODER_DEVICE` | `cpu` | Where the text encoder runs. `cpu` keeps VRAM free at the cost of ~14 GB of host RAM and the slowest part of every generation; `cuda` is much faster but wants roughly 14 GB of VRAM on top of the motion model. See [Where to run the text encoder](#where-to-run-the-text-encoder). |
+
+### Where to run the text encoder
+
+The text encoder (Llama 3 8B behind LLM2Vec) is the largest thing Kimodo loads and the slowest part of a generation. Where it runs is the main hardware trade-off in this project.
+
+| | `TEXT_ENCODER_DEVICE=cpu` (default) | `TEXT_ENCODER_DEVICE=cuda` |
+|---|---|---|
+| VRAM | ~4 GB, 6 GB sharing with Houdini | ~17 GB, plus the viewport |
+| System RAM | **~14 GB**, held for as long as the container runs | modest |
+| Speed | ~30 s of encoding per sequence, against ~8 s of denoising | encoding all but disappears |
+
+The default is CPU because it runs on a 6 GB card. If you have VRAM to spare, moving it is the single biggest change you can make. Measured on the same nine-sequence, 600-sample clip, same machine, cache bypassed:
+
+| | Encoder on CPU | Encoder on GPU |
+|---|---|---|
+| Generation | 506.9 s | **22.9 s** |
+| Host RAM held | 14.22 GiB | 964 MiB |
+| VRAM used | 6.8 GB (viewport only) | 21.7 GB |
+
+Text encoding was not a contributor to generation time, it was generation time. Moving it also hands back about 13 GB of system RAM.
+
+```shell
+TEXT_ENCODER_DEVICE=cuda docker compose -f docker-compose.bridge.yaml up -d text-encoder
+```
+
+Both containers reserve the GPU, so nothing else needs changing, and no Houdini restart is involved: the encoder is a server-side container the node only talks to over HTTP. Set it in `.env` so it survives a restart.
+
+Check your headroom first. On the 24 GB card above, Houdini was already holding 6.8 GB and the encoder left **2.4 GB free**. That is enough for a viewport but not for a heavy scene or a GPU render alongside it. `nvidia-smi` tells you what you actually have, and a CUDA OOM surfaces as a failed job with the error in the node's __Status__, not as a silent fallback.
+
+Switching costs a container restart: about 100 s warm, and the healthcheck allows up to 10 minutes for a cold CPU load.
+
+**On Windows**, note that the containers run inside WSL2, which by default may claim up to half your RAM and does not hand freed pages back to Windows. With the encoder on CPU that is ~14 GB that looks permanently gone. A `%USERPROFILE%\.wslconfig` fixes it:
+
+```ini
+[wsl2]
+memory=20GB
+autoMemoryReclaim=gradual
+```
+
+It takes effect after `wsl --shutdown`, which stops Docker, so do it between sessions.
 
 The Houdini package (`fxhoudinikimodo.json`) adds `houdini/` to `HOUDINI_PATH` (otls, python_panels) and `houdini/python` to `PYTHONPATH` (the timeline panel's code).
 

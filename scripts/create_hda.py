@@ -113,8 +113,11 @@ def rebuild_segments(node):
 
 def refresh_starts(node):
     """Fill each instance's read-only first and last scene frame."""
+    start = node.parm("start_frame")
+    if start is None:                    # never take the node down over a display field
+        return
     segs = read_timeline(node).get("segments") or []
-    f = int(node.parm("start_frame").eval())
+    f = int(start.eval())
     for i, sg in enumerate(segs, start=1):
         a, b = node.parm("seg_from%d" % i), node.parm("seg_to%d" % i)
         if a is None or b is None:
@@ -1122,6 +1125,14 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
         is_hidden=True,
         help="Length of the last generated clip in samples and seconds.",
     ))
+    gen.addParmTemplate(hou.FloatParmTemplate(
+        "scene_fps", "Scene FPS", 1,
+        default_expression=("$FPS",),
+        default_expression_language=(hou.scriptLanguage.Hscript,),
+        is_hidden=True,
+        help="The scene FPS, as an expression, so the sequence lengths in seconds follow "
+             "it without anything having to refresh them.",
+    ))
     gen.addParmTemplate(hou.LabelParmTemplate(
         "status_label", "Status",
         # A label parm centres its text within each column, so one wide column puts it
@@ -1220,14 +1231,6 @@ def build_hda(node_name, description, hda_path, generate_cb, skin_sections=None)
     # Tab: Output - timing and the clip file.
     out = hou.FolderParmTemplate("fld_output", "Output", folder_type=hou.folderType.Tabs)
     out.addParmTemplate(hou.IntParmTemplate(
-        "scene_fps", "Scene FPS", 1,
-        default_expression=("$FPS",),
-        default_expression_language=(hou.scriptLanguage.Hscript,),
-        is_hidden=True,
-        help="The scene FPS, as an expression, so the sequence lengths in seconds follow "
-             "it without anything having to refresh them.",
-    ))
-    gen.addParmTemplate(hou.FloatParmTemplate(
         "start_frame", "Start Frame", 1,
         script_callback="hou.pwd().type().hdaModule().refresh_starts(hou.pwd())",
         script_callback_language=hou.scriptLanguage.Python,

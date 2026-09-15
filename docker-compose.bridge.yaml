@@ -20,9 +20,20 @@ services:
     ports:
       - "9550:9550"
     environment:
-      - TEXT_ENCODER_DEVICE=cpu
+      # cpu keeps VRAM free (the encoder is the bulk of Kimodo's GPU footprint) at the
+      # cost of ~14 GB of host RAM and ~30 s of encoding per sequence. cuda is much
+      # faster but wants roughly 14 GB of VRAM on top of the motion model.
+      - TEXT_ENCODER_DEVICE=${TEXT_ENCODER_DEVICE:-cpu}
+      - TEXT_ENCODERS_DIR=/workspace/text_encoders   # local McGill adapters, base repointed to the ungated NousResearch mirror
       - HF_HOME=/workspace/.cache/huggingface
       - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
+    deploy:                     # needed for TEXT_ENCODER_DEVICE=cuda; harmless on cpu
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     healthcheck:
       # Hit /config (the gradio config endpoint kimodo's TextEncoderAPI fetches on
       # connect), not just / — otherwise "healthy" can race ahead of gradio being
@@ -47,6 +58,7 @@ services:
       - MOCK_MODE=${MOCK_MODE:-0}   # 0 = live inference; 1 = serve dev_reference.npz
       - OUTPUT_DIR=/workspace/output
       - TEXT_ENCODER_URL=http://text-encoder:9550/
+      - TEXT_ENCODERS_DIR=/workspace/text_encoders   # for the local-encoder fallback
       - HF_HOME=/workspace/.cache/huggingface
       - HUGGING_FACE_HUB_TOKEN=${HUGGING_FACE_HUB_TOKEN}
       # The model is preloaded at startup; load it from the local HF cache and

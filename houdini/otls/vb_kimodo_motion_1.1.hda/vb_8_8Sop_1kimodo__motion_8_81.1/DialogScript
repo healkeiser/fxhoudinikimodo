@@ -200,6 +200,15 @@
             help    "Length of the last generated clip in samples and seconds."
         }
         parm {
+            name    "scene_fps"
+            label   "Scene FPS"
+            type    float
+            invisible
+            default { [ "$FPS" hscript-expr ] }
+            help    "The scene FPS, as an expression, so the sequence lengths in seconds follow it without anything having to refresh them."
+            range   { 0 10 }
+        }
+        parm {
             name    "status_label"
             label   "Status"
             type    label
@@ -333,13 +342,14 @@
         label   "Output"
 
         parm {
-            name    "scene_fps"
-            label   "Scene FPS"
+            name    "start_frame"
+            label   "Start Frame"
             type    integer
-            invisible
-            default { [ "$FPS" hscript-expr ] }
-            help    "The scene FPS, as an expression, so the sequence lengths in seconds follow it without anything having to refresh them."
-            range   { 0 10 }
+            default { [ "$FSTART" hscript-expr ] }
+            help    "Scene frame on which the clip begins.\nThe __first__ sample holds before it, the __last__ sample holds after the clip ends."
+            range   { -1000 1000 }
+            parmtag { "script_callback" "hou.pwd().type().hdaModule().refresh_starts(hou.pwd())" }
+            parmtag { "script_callback_language" "python" }
         }
         parm {
             name    "npz_path"
