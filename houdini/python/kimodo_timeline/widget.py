@@ -736,8 +736,20 @@ class TimelineWidget(QtWidgets.QWidget):
         for w in (self.canvas, self.transition, self.gen_btn, self.cancel_btn, self.fit_btn, self.key_btn, self.key_track):
             w.setEnabled(enabled)
         if not enabled:
+            # The node was deleted, or the scene was replaced. Disabling the widgets is
+            # not enough: the canvas would go on painting the dead node's segments.
+            # Guarded so this costs nothing on the ticks after the first.
             self.warn_label.setText("")
-            self.status_label.setText(""); return
+            self.status_label.setText("")
+            self.total_label.setText("")
+            self.progress.setVisible(False)
+            if self.canvas.tl.segments or any(self.canvas.tl.tracks.values()):
+                self.canvas.tl = Timeline()
+                self.canvas.start = 1
+                self._last_json = None
+                self._last_selected = None
+                self.canvas.update()
+            return
         new_start = bridge.start_frame(self.node)
         new_hip = bridge.hip_frame_range()
         if new_start != self.canvas.start or new_hip != self.canvas.hip_range:
