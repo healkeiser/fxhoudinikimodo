@@ -122,21 +122,20 @@ def load_npz_bytes(blob: bytes) -> dict:
 # -- Houdini side -------------------------------------------------------------
 # Below the pure functions so the module still imports without hou.
 
-def wait_reporting(op, seconds: float, progress: float, slice_s: float = 0.05) -> None:
-    """Sleep in slices, reporting progress the whole way.
+def wait_reporting(bar, seconds: float, progress: float, slice_s: float = 0.05) -> bool:
+    """Sleep in slices, reporting the whole way. True if Cancel was pressed.
 
-    One long sleep blocks the main thread, so Houdini never gets the event-loop time it
-    needs to raise and paint its interrupt dialog, and anything finishing inside a few
-    seconds shows no progress bar at all. A File Cache shows one immediately because it
-    reports continuously while it cooks. Slicing also keeps Cancel responsive, since
-    updateProgress is what services it.
+    One long sleep starves the event loop, so the dialog cannot paint and Cancel cannot
+    be clicked. Slicing keeps both alive: bar.update pumps events every 50 ms.
     """
     end = time.monotonic() + seconds
     while True:
-        op.updateProgress(progress)          # raises hou.OperationInterrupted on Cancel
+        bar.update(progress)
+        if bar.cancelled:
+            return True
         left = end - time.monotonic()
         if left <= 0:
-            return
+            return False
         time.sleep(min(slice_s, left))
 
 
@@ -152,9 +151,11 @@ def regenerate(node, seg_index: int, to_end: bool = False, poll: float = 2.0):
     `to_end` re-rolls this sequence and every one after it instead, which is what you
     want when the change should carry through the rest of the clip.
 
-    Blocks behind Houdini's progress dialog: a partial regen is short, and the alternative
-    is a second copy of the background poller in the generate callback. Returns a one-line
-    summary for the node's Status.
+    Blocks behind a progress dialog: a partial regen is short, and the alternative is a
+    second copy of the background poller in the generate callback. The dialog is our own
+    QProgressDialog rather than hou.InterruptableOperation, which stays hidden until
+    HOUDINI_INTERRUPT_THRESH seconds have passed and so never appeared for a job this
+    short. Returns a one-line summary for the node's Status.
     """
     import os
 
@@ -221,12 +222,20 @@ def regenerate(node, seg_index: int, to_end: bool = False, poll: float = 2.0):
     job = resp.json()["job_id"]
 
     what = "sequence %d" % (seg_index + 1) if single else "from sequence %d" % (seg_index + 1)
-    # One bar: a long_operation_name would add a second one, and updateLongProgress is
-    # only needed for its status text, which the node's Status parm already carries.
-    with hou.InterruptableOperation("Regenerating " + what, open_interrupt_dialog=True) as op:
+    from .progress import JobProgress
+
+    def _cancel_job():
+        try:
+            requests.post("%s/jobs/%s/cancel" % (url, job), timeout=10)
+        except Exception:
+            pass                      # the dialog is closing either way
+        raise hou.OperationInterrupted("Cancelled")
+
+    with JobProgress("Kimodo", "Regenerating " + what) as bar:
         last = 0.0
         while True:
-            wait_reporting(op, poll, last)
+            if wait_reporting(bar, poll, last):
+                _cancel_job()
             d = requests.get("%s/jobs/%s" % (url, job), timeout=15).json()
             if d["status"] == "done":
                 break
@@ -234,8 +243,8 @@ def regenerate(node, seg_index: int, to_end: bool = False, poll: float = 2.0):
                 raise RuntimeError(d.get("error") or d["status"])
             if d.get("progress") is not None:
                 last = float(d["progress"])
-                op.updateProgress(last)
-        op.updateProgress(1.0)
+                bar.update(last, "%s  %d%%" % (what, int(last * 100)))
+        bar.update(1.0, "Downloading clip")
         blob = requests.get("%s/jobs/%s/download" % (url, job), timeout=180).content
         new = load_npz_bytes(blob)
 

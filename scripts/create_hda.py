@@ -559,13 +559,13 @@ else:
             if op is None:
                 time.sleep(interval)
             else:
-                # Slice the wait, reporting throughout. One long sleep blocks the main
-                # thread, so Houdini never gets the event-loop time to raise and paint
-                # its progress dialog and a short job shows no bar at all. This also
-                # services Cancel, which raises hou.OperationInterrupted.
+                # Slice the wait so the dialog paints and Cancel stays clickable: one
+                # long sleep starves the event loop. op.update pumps events every 50 ms.
                 _end = time.time() + interval
                 while True:
-                    op.updateProgress(last_prog)
+                    op.update(last_prog)
+                    if op.cancelled:
+                        raise hou.OperationInterrupted("Cancelled")
                     _left = _end - time.time()
                     if _left <= 0:
                         break
@@ -598,7 +598,7 @@ else:
                 done_label = f"Done{elapsed_str}" + (" (cached)" if data.get("cached") else "")
                 if op is not None:
                     last_prog = 1.0
-                    op.updateProgress(1.0)
+                    op.update(1.0, "Downloading clip")
                 try:
                     _set("status", f"Downloading...{elapsed_str}")
                     os.makedirs(download_dir, exist_ok=True)
@@ -643,19 +643,36 @@ else:
                     label = f"Running {int(prog * 100):d}%" + (f" \u00b7 {phase}" if phase else "") + elapsed_str
                     _set("status", label)
                     if op is not None:
-                        op.updateProgress(last_prog)
+                        op.update(last_prog, label)
                 else:
                     label = f"Running...{elapsed_str}"
                     _set("status", label)
                     if op is not None:
-                        op.updateProgress(last_prog)
+                        op.update(last_prog, label)
 
     if bool(node.parm("wait_for_result").eval()) and hou.isUIAvailable():
-        # Blocking mode: the same loop, on the main thread, behind Houdini's standard
-        # progress dialog. Cancel maps onto the server's own cancel endpoint.
+        # Blocking mode: the same loop, on the main thread, behind a progress dialog.
+        # Ours, not hou.InterruptableOperation, which stays hidden until
+        # HOUDINI_INTERRUPT_THRESH seconds have passed and so never showed for a job
+        # that finishes in two. Cancel maps onto the server's own cancel endpoint.
         try:
-            with hou.InterruptableOperation("Generating motion",
-                                            open_interrupt_dialog=True) as op:
+            from kimodo_timeline.progress import JobProgress
+            _bar = JobProgress("Kimodo", "Generating motion")
+        except ImportError:
+            # HDA installed without houdini/python on PYTHONPATH: fall back to Houdini's
+            # own dialog, which works but stays hidden for the first few seconds.
+            class _bar:
+                def __init__(self, *a): pass
+                def __enter__(self):
+                    self._op = hou.InterruptableOperation(
+                        "Generating motion", open_interrupt_dialog=True).__enter__()
+                    return self
+                def update(self, f, label=None): self._op.updateProgress(f)
+                cancelled = False
+                def __exit__(self, *e): return self._op.__exit__(*e)
+            _bar = _bar()
+        try:
+            with _bar as op:
                 _poll(op)
         except hou.OperationInterrupted:
             node.parm("status").set("Cancelling...")
