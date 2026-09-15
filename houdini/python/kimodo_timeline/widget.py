@@ -527,20 +527,34 @@ class Canvas(QtWidgets.QWidget):
         """
         QtCore.QTimer.singleShot(0, fn)
 
+    def _ask(self, prompt, frames):
+        """Run the segment dialog and return (accepted, prompt, frames).
+
+        Parented to Houdini's main window so it picks up Houdini's stylesheet, which
+        also means Houdini keeps it alive after it closes; a fresh one per edit would
+        then outlive the session. Read what we need while it is alive, then hand it to
+        deleteLater.
+        """
+        dlg = PromptDialog(prompt, frames, hou.qt.mainWindow())
+        accepted = dlg.exec() == QtWidgets.QDialog.Accepted
+        text, count = dlg.text(), dlg.frames()
+        dlg.deleteLater()
+        return accepted, text, count
+
     def edit_prompt(self, i):
         seg = self.tl.segments[i]
-        dlg = PromptDialog(seg.prompt, seg.frames, hou.qt.mainWindow())
-        if dlg.exec() == QtWidgets.QDialog.Accepted:
-            self.tl.set_prompt(i, dlg.text())
-            if dlg.frames() != seg.frames:
-                self.tl.resize(i, dlg.frames()); self.tl.clamp_keys(self.start)
+        accepted, text, frames = self._ask(seg.prompt, seg.frames)
+        if accepted:
+            self.tl.set_prompt(i, text)
+            if frames != seg.frames:
+                self.tl.resize(i, frames); self.tl.clamp_keys(self.start)
             self._commit("edit segment")
 
     def add_segment(self, after=None):
         default = self.tl.segments[after].frames if after is not None and self.tl.segments else int(round(3 * bridge.fps()))
-        dlg = PromptDialog("", default, hou.qt.mainWindow())
-        if dlg.exec() == QtWidgets.QDialog.Accepted:
-            self.tl.add(dlg.text(), dlg.frames(), after=after)
+        accepted, text, frames = self._ask("", default)
+        if accepted:
+            self.tl.add(text, frames, after=after)
             self._commit("add segment")
 
     def split_at(self, i, frame):
