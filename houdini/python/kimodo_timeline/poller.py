@@ -36,7 +36,10 @@ class JobDialog(QtWidgets.QDialog):
         super().__init__(hou.qt.mainWindow())
         self.cancel_requested = False
         self.setWindowTitle(title)
-        self.setStyleSheet(hou.ui.qtStyleSheet())
+        # hou.qt.styleSheet is what SideFX's own houpythonportion/qt/Dialog.py calls,
+        # and what fxgui's fxdcc.get_houdini_stylesheet returns. hou.ui.qtStyleSheet is
+        # the same string.
+        self.setStyleSheet(hou.qt.styleSheet())
         lay = QtWidgets.QVBoxLayout(self)
         self.label = QtWidgets.QLabel("Queued")
         lay.addWidget(self.label)
