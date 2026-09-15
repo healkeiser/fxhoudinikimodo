@@ -2,7 +2,7 @@
 
 model.py   timeline arithmetic (pure python, tested)
 bridge.py  reading/writing the node (hou)
-widget.py  the PySide6 panel
+widget.py  the Qt panel (binding chosen by qt.py)
 """
 
 

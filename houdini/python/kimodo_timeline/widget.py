@@ -1,4 +1,4 @@
-"""Kimodo Timeline: PySide6 view over model.Timeline, bound to a Kimodo Motion node.
+"""Kimodo Timeline: a Qt view over model.Timeline, bound to a Kimodo Motion node.
 
 View controls follow the usual DCC timeline conventions:
   wheel            zoom around the cursor
@@ -11,7 +11,7 @@ from __future__ import annotations
 import html
 
 import hou
-from PySide6 import QtCore, QtGui, QtWidgets
+from .qt import QtCore, QtGui, QtWidgets
 
 from . import bridge
 from .model import MIN_FRAMES, TRACKS, TRACK_LABELS, Timeline
