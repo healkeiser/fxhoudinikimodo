@@ -239,7 +239,28 @@ __Regenerate__ re-rolls that sequence alone. The clip keeps its exact length and
 
 __From Here__ re-rolls that sequence and every sequence after it, for when the change should carry through the rest of the clip.
 
-Measured on a 601-sample clip, re-rolling one sequence took about 60 s against roughly 8 minutes for a full generation, and left joins of 7.69 cm and 3.77 cm against the clip's own 9.67 cm of movement per sample. Both are below 1.0x, so neither reads as a cut. The node's __Status__ reports the measured join every time, so you can judge a result rather than assume it.
+### Why not just press Generate again
+
+Because generation is unseeded, so __Generate__ re-rolls *everything*. If eight sequences out of nine are good and one is not, a full generation gambles the eight to fix the one. Regenerating a single sequence leaves every other frame byte-identical, which is the thing you actually want, and it is the reason to use it even when a full generation is fast.
+
+Speed is a secondary argument, and how secondary depends on [where the text encoder runs](#where-to-run-the-text-encoder). Same nine-sequence clip, same machine:
+
+| | Encoder on CPU | Encoder on GPU |
+|---|---|---|
+| Generate, all nine | 506.9 s | 22.9 s |
+| Regenerate one sequence | ~60 s | **4.3 s** |
+
+On CPU the time saving is the headline. On GPU both are quick, and preserving the rest of the clip is the whole point.
+
+### Reading the result
+
+The node's __Status__ reports the measured join every time, so you can judge a result rather than assume it:
+
+```
+Regenerated sequence 5; seam 2.44 / 3.46 cm vs 11.07 cm/sample (0.31x)
+```
+
+Two figures for a single sequence, one for each join, then the clip's own average movement per sample and the worst join as a ratio of it. Below 1.0x means the join moves less than the motion around it, which is the point at which it stops reading as a cut. Something approaching or above 1.0x is worth looking at.
 
 ### How it works, and why a constraint is not enough
 
