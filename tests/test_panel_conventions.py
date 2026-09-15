@@ -94,13 +94,14 @@ def test_no_qt6_only_calls_outside_the_shim():
         assert ".position()" not in src, "%s uses Qt6-only position(); use event_pos()" % name
 
 
-def test_context_menu_is_deleted():
-    """One QMenu leaked per right-click until contextMenuEvent deleted it; four were alive
-    in a single session. Checked here rather than at runtime, where the measurement turned
-    out to describe Qt's deletion timing instead of our code."""
+def test_context_menu_is_unparented():
+    """A QMenu parented to the Canvas outlives the right-click that made it; four were
+    alive in one session. SideFX's own QuickStart panel builds it unparented, so Python
+    owns it and it dies with the local. Nothing to delete, nothing to leak."""
     src = _read(os.path.join(PKG, "widget.py"))
     menu_fn = _func_source(src, "contextMenuEvent")
-    assert "deleteLater()" in menu_fn, "contextMenuEvent must delete the menu it builds"
+    assert "QtWidgets.QMenu()" in menu_fn, "build the context menu unparented"
+    assert "QtWidgets.QMenu(self)" not in menu_fn, "parenting the menu to the Canvas leaks it"
 
 
 def test_source_is_ascii():

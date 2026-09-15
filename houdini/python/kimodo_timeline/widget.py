@@ -479,7 +479,7 @@ class Canvas(QtWidgets.QWidget):
     def contextMenuEvent(self, ev):
         pos = QtCore.QPointF(ev.pos())
         row, track = self._row_of(pos.y())
-        menu = QtWidgets.QMenu(self)
+        menu = QtWidgets.QMenu()
         if row == "prompt":
             i, _ = self._seg_at(pos)
             if i >= 0:
@@ -515,7 +515,6 @@ class Canvas(QtWidgets.QWidget):
         menu.addSeparator()
         menu.addAction("Fit timeline  (F)", self.fit)
         run_exec(menu, ev.globalPos())
-        menu.deleteLater()          # one menu was leaking per right-click
 
     def _scrub_to(self, x):
         """Move our own playhead and repaint straight away, then ask Houdini to follow.

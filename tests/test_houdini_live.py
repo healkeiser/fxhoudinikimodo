@@ -36,7 +36,7 @@ def _flush_deletes():
 
 def _count(cls):
     _flush_deletes()
-    return len([o for o in gc.get_objects() if type(o) is cls])
+    return len([o for o in gc.get_objects() if isinstance(o, cls)])
 
 
 def _accept_visible_dialog(cls, delay_ms=60):
@@ -45,6 +45,17 @@ def _accept_visible_dialog(cls, delay_ms=60):
         for w in _app().topLevelWidgets():
             if isinstance(w, cls) and w.isVisible():
                 w.accept()
+                return
+        QtCore.QTimer.singleShot(delay_ms, go)
+    QtCore.QTimer.singleShot(delay_ms, go)
+
+
+def _close_visible(cls, delay_ms=60):
+    """Close the next visible widget of `cls`, from the event loop."""
+    def go():
+        for w in _app().topLevelWidgets():
+            if isinstance(w, cls) and w.isVisible():
+                w.close()
                 return
         QtCore.QTimer.singleShot(delay_ms, go)
     QtCore.QTimer.singleShot(delay_ms, go)
@@ -97,11 +108,28 @@ def test_dialogs_do_not_accumulate():
         c.deleteLater()
 
 
-# There is deliberately no runtime menu-leak test. It measured Qt's deletion semantics
-# rather than our code: creating three QMenus and flushing DeferredDelete reliably leaves
-# one alive for a while, with a control that creates none showing no drift. That made it
-# flaky without saying anything about contextMenuEvent, which is covered by the source
-# guard that it calls deleteLater at all.
+def test_real_context_menu_does_not_leak():
+    """Drives the actual contextMenuEvent, not a synthetic QMenu loop.
+
+    An earlier version of this test built its own menus and reported one leaking; that was
+    the loop variable still holding the last one at count time. Driving the real handler
+    and letting the local fall out of scope is the only version that measures our code.
+    """
+    from kimodo_timeline.qt import QtGui
+    c = _canvas()
+    c.resize(600, 200)
+    try:
+        before = _count(QtWidgets.QMenu)
+        for _ in range(3):
+            _close_visible(QtWidgets.QMenu)
+            ev = QtGui.QContextMenuEvent(QtGui.QContextMenuEvent.Mouse,
+                                         QtCore.QPoint(100, 30),      # over a segment
+                                         QtCore.QPoint(500, 500))
+            c.contextMenuEvent(ev)
+        after = _count(QtWidgets.QMenu)
+        assert after <= before, "context menus accumulating: %d -> %d" % (before, after)
+    finally:
+        c.deleteLater()
 
 
 def test_no_input_grab_left_behind():
