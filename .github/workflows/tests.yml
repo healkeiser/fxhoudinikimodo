@@ -29,7 +29,10 @@ jobs:
           python-version: "3.11"
 
       - name: Install ruff
-        run: pip install "ruff>=0.15"
+        # Pinned: `ruff format --check` compares against one version's
+        # output, so an unpinned install turns every ruff release into a
+        # red build on a commit that changed nothing. Bump deliberately.
+        run: pip install ruff==0.16.7
 
       - name: Lint
         run: ruff check .

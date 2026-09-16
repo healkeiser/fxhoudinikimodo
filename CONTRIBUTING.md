@@ -126,9 +126,10 @@ from.
 - Comments explain why, not what. The repo leans heavily on this, and it is why the
   reasoning behind an odd-looking workaround usually sits right above it.
 - Say "segment", never "sequence". One concept, one word.
-- `ruff check .` and `ruff format --check .` must both pass; CI runs them. The config is
-  in `pyproject.toml`: 80 columns, and the rules that would only restyle working code are
-  switched off there, so anything the linter does report is worth reading.
+- `ruff check .` and `ruff format --check .` must both pass; CI runs them, on the ruff
+  version pinned in `.github/workflows/tests.yml`. The config is in `pyproject.toml`: 80
+  columns, and the rules that would only restyle working code are switched off there, so
+  anything the linter does report is worth reading.
 - `scripts/_soma77.py` is excluded from the formatter on purpose. Its row grouping is the
   data, and it is embedded verbatim as the HDA's PythonModule section, so reflowing it
   would mean regenerating the HDA for nothing.

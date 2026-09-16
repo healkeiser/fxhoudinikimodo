@@ -16,7 +16,12 @@ extend-exclude = ["vendor", "backup", "houdini/otls"]
 # each line and make 77 joints unreadable. It is also embedded verbatim as the
 # HDA's PythonModule section, so reflowing it would mean regenerating the HDA
 # for nothing.
-exclude = ["scripts/_soma77.py"]
+#
+# Markdown, because ruff 0.16 started formatting the Python blocks inside
+# it. The snippets in CONTRIBUTING.md and docs/ are written to be read and
+# pasted, not to be black-clean: the live-test line is one statement on
+# purpose, so it can go into Houdini's Python Shell in one paste.
+exclude = ["scripts/_soma77.py", "*.md"]
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "B", "C4", "UP", "SIM"]
