@@ -1,0 +1,106 @@
+name: Bug report
+description: Something in the bridge does not work
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        If the **motion itself** is wrong (it drifts, ignores the prompt, or the skeleton
+        looks broken in ways the node did not cause), that is upstream NVIDIA Kimodo, not
+        this bridge. Report it at
+        [nv-tlabs/kimodo](https://github.com/nv-tlabs/kimodo/issues).
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which half
+      options:
+        - Server / Docker (containers, /generate, /health)
+        - HDA (the Kimodo Motion node, its parameters, its output)
+        - Timeline panel
+        - Installation / setup
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Drop a Kimodo Motion SOP
+        2. Prompt "a person walks forward", 3 seconds
+        3. Press Generate
+        4. ...
+    validations:
+      required: true
+
+  - type: input
+    id: houdini
+    attributes:
+      label: Houdini version
+      placeholder: "20.5.584"
+    validations:
+      required: true
+
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU and VRAM
+      placeholder: "RTX 4090, 24 GB"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: encoder
+    attributes:
+      label: Where the text encoder runs
+      description: The TEXT_ENCODER_DEVICE value, from your .env or your compose command.
+      options:
+        - cpu (the default)
+        - cuda
+        - Do not know
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: OS
+      options:
+        - Windows (Docker Desktop, WSL2 backend)
+        - Linux (Docker Engine + NVIDIA Container Toolkit)
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: health
+    attributes:
+      label: Server health
+      description: Output of `curl http://localhost:8001/health`.
+      render: shell
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Container logs
+      description: |
+        `docker logs --tail 80 kimodo-api` and, if the encoder is involved,
+        `docker logs --tail 40 text-encoder`. Include the traceback if there is one.
+      render: shell
+
+  - type: textarea
+    id: houdini-console
+    attributes:
+      label: Houdini console output
+      description: Windows > Python Shell, or the node's error message.
+      render: shell

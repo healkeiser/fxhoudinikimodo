@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest something the bridge should do
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: |
+        Describe the workflow, not the feature. What are you trying to get out of Houdini,
+        and where does the current node make you stop?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you have in mind
+      description: Optional. A rough idea is fine; so is leaving this empty.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you do instead today
+      description: The workaround you are living with, if any. It usually shapes the design.
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This is about the Houdini bridge, not about how the Kimodo model itself generates motion.
+          required: true
