@@ -80,6 +80,27 @@ Interactions:
 The panel follows the current selection (first selected `vb::kimodo_motion*` node) and
 shows an empty state otherwise.
 
+### It is a Python Panel, so it sits inside a Houdini pane
+
+`Canvas` is embedded in Houdini's own pane widget (`QOpenGLWidget/RE_WindowDrawable`),
+which makes it the parent every unhandled Qt event propagates to. That is not true of a
+floating window, and it is the one rule to keep in mind here:
+
+**Consume presses and releases symmetrically.** `QWidget.mousePressEvent`'s default
+implementation ignores the event, and an ignored press travels up the parent chain into
+Houdini's pane. `mouseReleaseEvent` consumes every release, so handing a press to
+`super()` delivered it to Houdini's pane with no release to match. That pane was then
+left holding a button that never came up, and from then on every Houdini pane ignored
+the mouse while this panel carried on working, until a restart.
+
+`Canvas` sets `WA_NoMousePropagation` so this cannot come back, and
+`tests/test_houdini_live.py::test_no_mouse_event_escapes_the_canvas` fails if it does.
+The symptom looks exactly like a modal dialog, a leaked grab or a nested event loop, and
+nine commits chased those before the event trace showed the real shape: one right-button
+press reaching five receivers, its release reaching one. Reach for
+`scripts/diagnose_input_wedge.py` (`trace()`, then read `%TEMP%/kimodo_wedge_trace.log`)
+before theorising.
+
 ## Out of scope for v1
 
 Thumbnails, per-key target editing inside the panel
