@@ -179,6 +179,29 @@ def test_context_menu_is_houdinis_own():
         "the menu needs one reference to survive popup()")
 
 
+def test_the_canvas_never_leaks_a_press_into_houdinis_pane():
+    """The input wedge, finally, and it was never about menus.
+
+    Canvas.mouseReleaseEvent consumes every release. mousePressEvent used to hand any
+    non-left button to super(), whose default implementation IGNORES the event, so it
+    propagated up the parent chain. The panel is a Python Panel, so that chain runs into
+    QOpenGLWidget/RE_WindowDrawable: Houdini's own pane. Traced in a live session, one
+    right-button press reached five receivers while its release reached one. Houdini's
+    pane was left holding a button that never came up, and from then on every pane except
+    this one ignored the mouse.
+
+    Press and release must consume the same buttons. An interactive canvas has no
+    business letting an ancestor see its mouse events at all."""
+    src = _code(_read(os.path.join(PKG, "widget.py")))
+    press = _func_source(src, "mousePressEvent")
+    assert "super()" not in press, "a press given to super() is ignored, and then propagates"
+    assert "ignore()" not in press, "an ignored press propagates into Houdini's pane"
+    assert "accept()" in press, "consume the press the same way the release is consumed"
+    release = _func_source(src, "mouseReleaseEvent")
+    assert "super()" not in release and "ignore()" not in release, (
+        "if the release starts propagating, the press must too")
+
+
 def test_deferral_waits_for_the_mouse_release():
     """Houdini tracks mouse buttons globally across every Qt widget and clears that state
     on the next release (hou.qt.skipClosingMenusForCurrentButtonPress documents both), so

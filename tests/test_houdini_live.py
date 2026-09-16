@@ -175,6 +175,48 @@ def test_no_input_grab_left_behind():
         c.deleteLater()
 
 
+def test_no_mouse_event_escapes_the_canvas():
+    """The input wedge, as a test that needs no human.
+
+    QApplication.notify walks a press up the parent chain for as long as each widget
+    ignores it, and a synthetic press walks it exactly like a real one. So put the canvas
+    inside a host widget and count who receives one press per button. Anything above the
+    canvas means it would have reached Houdini's pane in a real panel, and a right press
+    that gets there without its release is what wedges Houdini.
+    """
+    seen = []
+
+    class Spy(QtCore.QObject):
+        def eventFilter(self, obj, ev):
+            if ev.type() in (QtCore.QEvent.MouseButtonPress,
+                             QtCore.QEvent.MouseButtonRelease):
+                seen.append("%s.%s" % (type(obj).__name__, ev.type().name.split("_")[-1]))
+            return False
+
+    from kimodo_timeline.qt import QtGui
+    host = QtWidgets.QWidget()          # stands in for Houdini's pane
+    c = widget.Canvas(host)
+    c.tl = model.Timeline([model.Segment("walk", 24)])
+    c.resize(600, 200)
+    spy = Spy()
+    _app().installEventFilter(spy)
+    try:
+        for button in (QtCore.Qt.RightButton, QtCore.Qt.MiddleButton, QtCore.Qt.LeftButton):
+            for kind in (QtCore.QEvent.MouseButtonPress, QtCore.QEvent.MouseButtonRelease):
+                del seen[:]
+                ev = QtGui.QMouseEvent(kind, QtCore.QPointF(50, 50),
+                                       button, button, QtCore.Qt.NoModifier)
+                _app().sendEvent(c, ev)
+                escaped = [s for s in seen if not s.startswith("Canvas")]
+                assert not escaped, (
+                    "%s %s escaped the canvas to %s; in a panel that is Houdini's pane"
+                    % (button, kind, escaped))
+    finally:
+        _app().removeEventFilter(spy)
+        c.deleteLater()
+        host.deleteLater()
+
+
 def run():
     results = []
     for name, fn in sorted(globals().items()):

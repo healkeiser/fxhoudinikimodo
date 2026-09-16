@@ -47,11 +47,11 @@ def later(fn, _poll_ms=16):
     (hou.qt.skipClosingMenusForCurrentButtonPress), so running between a real press and
     its release is asking for trouble.
 
-    What it is NOT is the cure for the input wedge, however many commits said so. The
-    measured fact there is that after our context menu ran, every native mouse message
-    reached Houdini's panes twice. The mechanism is still not understood; the current bet
-    is fxhoucachemanager's menu shape, which has never wedged Houdini. See
-    contextMenuEvent.
+    What it is NOT is the cure for the input wedge, however many commits said so. That
+    was Canvas.mousePressEvent leaking a right-button press into Houdini's own pane while
+    mouseReleaseEvent kept the release, so the pane was left holding a button that never
+    came up. See Canvas.mousePressEvent. Nine attempts blamed the menu and the dialog on
+    the way, which is what theorising instead of tracing the events buys you.
     """
     def go():
         if QtWidgets.QApplication.mouseButtons() != QtCore.Qt.NoButton:
@@ -157,6 +157,11 @@ class Canvas(QtWidgets.QWidget):
         self._pan_x = 0.0
         self._menu = None                 # the open context menu, kept alive
         self.setMouseTracking(True)
+        # Nothing above us is allowed to see our mouse events. This panel is a Python
+        # Panel, so "above us" is Houdini's own pane widget, and a press that reaches it
+        # without its release leaves that pane holding a button forever. The handlers
+        # below consume what they use; this makes it true whatever a later one forgets.
+        self.setAttribute(QtCore.Qt.WA_NoMousePropagation)
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
         self.setMinimumHeight(RULER_H + PROMPT_H + TRACK_H * len(TRACKS) + 8)
         self.setContextMenuPolicy(QtCore.Qt.DefaultContextMenu)
@@ -372,7 +377,17 @@ class Canvas(QtWidgets.QWidget):
         if ev.button() == QtCore.Qt.MiddleButton:
             self._mode = "pan"; self._pan_x = pos.x(); self.setCursor(QtCore.Qt.ClosedHandCursor); return
         if ev.button() != QtCore.Qt.LeftButton:
-            return super().mousePressEvent(ev)
+            # Consume it. THIS is the input wedge, and it has nothing to do with menus.
+            # QWidget.mousePressEvent's default implementation ignores the event, and an
+            # ignored press propagates up the parent chain. In a Python Panel that chain
+            # runs into QOpenGLWidget/RE_WindowDrawable, Houdini's own pane: measured in
+            # a live session, one right-button press arrived at five receivers, ours and
+            # Houdini's. mouseReleaseEvent below consumes every release, so the matching
+            # release never followed it, and Houdini's pane was left holding a button
+            # that is never let go. Afterwards every pane but this one ignores the mouse.
+            # Press and release must consume the same buttons.
+            ev.accept()
+            return
         row, track = self._row_of(pos.y())
         if row == "ruler":
             self._mode = "scrub"; self._scrub_to(pos.x()); return
