@@ -40,12 +40,28 @@ CLIP_KEYS = (
 )
 
 
+class Precondition(ValueError):
+    """Something the user can fix and ask again, not a failure: which button
+    to press first, what to update. Callers show these as a warning and leave
+    last_error alone, so the node does not go red over a wrong turn."""
+
+
 def cut_sample(
     frames_per_segment, seg_index: int, scene_fps: float, source_fps: float
 ) -> int:
-    """Clip sample where `seg_index` begins. Lengths are in scene frames."""
-    scene = sum(int(f) for f in frames_per_segment[:seg_index])
-    return int(round(scene * source_fps / scene_fps))
+    """Clip sample where `seg_index` begins. Lengths are in scene frames.
+
+    Summed per segment rather than converted from the cumulative scene frame,
+    because that is how the clip was laid out: the server truncates each
+    segment on its own (`int(duration * fps)`, see `samples_for`), so rounding
+    the running total instead disagrees with it by a sample on about a third
+    of segment lengths at 24 fps against a 30 fps model. That sample is the
+    difference between the tail pin landing on the join and landing next to it.
+    """
+    return sum(
+        samples_for(int(f), scene_fps, source_fps)
+        for f in frames_per_segment[:seg_index]
+    )
 
 
 def continue_payload(npz, cut: int, n: int) -> dict:
@@ -174,18 +190,18 @@ def regenerate(node, seg_index: int, to_end: bool = False):
 
     tl = Timeline.from_json(node.parm("timeline_json").eval())
     if not tl.segments:
-        raise ValueError("This node has no timeline to regenerate from.")
+        raise Precondition("This node has no timeline to regenerate from.")
     if not 0 <= seg_index < len(tl.segments):
-        raise ValueError(
+        raise Precondition(
             "Segment %d is outside the timeline." % (seg_index + 1)
         )
     if seg_index == 0:
-        raise ValueError(
+        raise Precondition(
             "Segment 1 has no earlier motion to continue from; use Generate."
         )
     src = node.parm("npz_path").eval()
     if not src or not Path(src).exists():
-        raise ValueError(
+        raise Precondition(
             "No generated clip on this node yet. Press Generate first."
         )
 
@@ -202,15 +218,15 @@ def regenerate(node, seg_index: int, to_end: bool = False):
     # A bounds check is not enough: edited segment lengths still produce an
     # in-range cut, just the wrong one. Compare what the timeline describes
     # against what is on disk.
-    expect = int(round(sum(frames) * source_fps / scene_fps))
+    expect = cut_sample(frames, len(frames), scene_fps, source_fps)
     if abs(expect - have) > 2 * n:
-        raise ValueError(
+        raise Precondition(
             "The clip on disk is %d samples but this timeline describes %d. The segment "
             "lengths changed since it was generated, so the cut would land in the wrong "
             "place. Press Generate first." % (have, expect)
         )
     if cut - n < 1 or cut > have:
-        raise ValueError(
+        raise Precondition(
             "Segment %d falls outside the clip on disk; press Generate."
             % (seg_index + 1)
         )
@@ -239,7 +255,7 @@ def regenerate(node, seg_index: int, to_end: bool = False):
     url = node.parm("server_url").eval().rstrip("/")
     resp = requests.post(url + "/generate", json=body, timeout=60)
     if resp.status_code == 422:
-        raise ValueError(
+        raise Precondition(
             "Server rejected `continue_from`; it predates partial "
             "regeneration. Update kimodo_server.py and kimodo_model.py, "
             "then restart the api container."

@@ -1025,6 +1025,14 @@ class TimelineWidget(QtWidgets.QWidget):
             fm.elidedText(text, QtCore.Qt.ElideRight, width)
         )
 
+    def _fail(self, text, severity=hou.severityType.Error):
+        """Show `text` in the footer and in Houdini's status bar, where the
+        severity picks the colour. Warning is for a precondition the user can
+        fix, Error for something that actually broke."""
+        self._set_status(text)
+        if hou.isUIAvailable():
+            hou.ui.setStatusMessage("Kimodo: " + text, severity=severity)
+
     def _sync_playhead(self):
         """Track the Houdini frame at ~30 fps. One HOM call, repaint on move."""
         if self.node is None or not self.isVisible():
@@ -1190,16 +1198,14 @@ class TimelineWidget(QtWidgets.QWidget):
         try:
             from . import regen
         except ImportError as e:
-            self._set_status("regen unavailable: %s" % e)
+            self._fail("regen unavailable: %s" % e)
             return
         try:
             self._set_status(regen.regenerate(self.node, index, to_end=to_end))
+        except regen.Precondition as e:
+            self._fail(str(e), hou.severityType.Warning)
         except Exception as e:
-            self._set_status(str(e))
-            if hou.isUIAvailable():
-                hou.ui.setStatusMessage(
-                    "Kimodo: %s" % e, severity=hou.severityType.Error
-                )
+            self._fail(str(e))
 
     def _generate(self):
         if self.node is None:

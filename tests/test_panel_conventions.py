@@ -64,10 +64,14 @@ def _code(src):
             and isinstance(first.value, ast.Constant)
             and isinstance(first.value.value, str)
         ):
-            blank(
-                (first.lineno, first.col_offset),
-                (first.end_lineno, first.end_col_offset),
-            )
+            begin = (first.lineno, first.col_offset)
+            blank(begin, (first.end_lineno, first.end_col_offset))
+            if len(body) == 1:
+                # Sole statement: blanking it all out leaves an empty body,
+                # and the result no longer parses. A docstring is never
+                # shorter than "pass".
+                at = starts[begin[0] - 1] + begin[1]
+                out[at : at + 4] = "pass"
     return "".join(out)
 
 
@@ -332,6 +336,39 @@ def test_poller_never_touches_hou_ui_at_import():
     assert "isUIAvailable" in src, (
         "JobWatcher.start must refuse a non-UI session"
     )
+
+
+def test_a_precondition_is_a_warning_not_an_error():
+    """The guards in regen.regenerate say which button to press first ("press
+    Generate"); nothing is broken, the user asked out of order. Both Regenerate
+    paths have to colour that one as a warning, and leave last_error alone,
+    because the cook script turns last_error into a hou.NodeError and reddens
+    the node.
+    """
+    hda = _read(HDA_SRC)  # run_regenerate lives in an embedded script string
+    start = hda.index("\ndef run_regenerate(")
+    for src, fn in (
+        (_code(_read(PKG / "widget.py")), "_regen"),
+        (hda[start : hda.index("\ndef ", start + 1)], "run_regenerate"),
+    ):
+        caught = [
+            ast.unparse(h)
+            for node in ast.walk(ast.parse(src))
+            if isinstance(node, ast.FunctionDef) and node.name == fn
+            for h in ast.walk(node)
+            if isinstance(h, ast.ExceptHandler)
+            and h.type is not None
+            and "Precondition" in ast.unparse(h.type)
+        ]
+        assert len(caught) == 1, (
+            "%s must catch regen.Precondition apart from the real failures" % fn
+        )
+        assert "severityType.Warning" in caught[0], (
+            "%s shows a precondition in the status bar's error red" % fn
+        )
+        assert "last_error" not in caught[0], (
+            "%s reddens the node over a precondition" % fn
+        )
 
 
 if __name__ == "__main__":

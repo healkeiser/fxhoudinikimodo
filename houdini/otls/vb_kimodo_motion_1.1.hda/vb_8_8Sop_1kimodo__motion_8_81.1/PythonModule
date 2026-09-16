@@ -264,6 +264,13 @@ def run_regenerate(node, index, to_end=False):
         raise
     try:
         msg = regen.regenerate(node, index, to_end=to_end)
+    except regen.Precondition as e:
+        # A wrong turn, not a broken cook: last_error is left alone, since the
+        # cook script turns it into a hou.NodeError and reddens the node.
+        node.parm("status").set(str(e))
+        if hou.isUIAvailable():
+            hou.ui.setStatusMessage("Kimodo: %s" % e,
+                                    severity=hou.severityType.Warning)
     except Exception as e:
         node.parm("last_error").set(str(e))
         node.parm("status").set("Error: %s" % e)
