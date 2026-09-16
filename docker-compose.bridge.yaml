@@ -20,6 +20,14 @@ x-hf-env: &hf-env
   TEXT_ENCODERS_DIR: /workspace/text_encoders
   HF_HOME: /workspace/.cache/huggingface
   HUGGING_FACE_HUB_TOKEN: ${HUGGING_FACE_HUB_TOKEN}
+  # Resolve from the local cache and never touch the network. Both services need this,
+  # not just api: transformers probes for the single-file `model.safetensors` before
+  # falling back to the sharded index, and that probe is a network call. With the hub
+  # reachable it 404s and the shards load; with it unreachable the probe raises and the
+  # encoder dies at startup even though all 25 GB are sitting in the cache.
+  # Set HF_HUB_OFFLINE=0 for a one-time download.
+  HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-1}
+  HF_HUB_DISABLE_XET: "1"   # the hf_xet downloader was observed to hang on this setup
 
 x-gpu: &gpu
   resources:
@@ -73,12 +81,9 @@ services:
       # creep during the phase the model reports nothing for. Measured CPU default;
       # lower it (or ignore it) when the encoder runs on the GPU.
       KIMODO_ENCODE_EST_S: ${KIMODO_ENCODE_EST_S:-30}
-      # The model is preloaded at startup; load it from the local HF cache and
-      # avoid the network so a flaky/stalling HF download can't hang startup.
-      # The weights must already be cached (`huggingface-cli download
-      # nvidia/Kimodo-SOMA-RP-v1.1`). Set HF_HUB_OFFLINE=0 for a one-time download.
-      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-1}
-      HF_HUB_DISABLE_XET: "1"   # the hf_xet downloader was observed to hang on this setup
+      # Offline resolution and the xet opt-out come from x-hf-env; the model is
+      # preloaded at startup and must already be cached (`huggingface-cli download
+      # nvidia/Kimodo-SOMA-RP-v1.1`).
     deploy:
       <<: *gpu
     depends_on:
