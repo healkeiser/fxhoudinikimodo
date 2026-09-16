@@ -1032,10 +1032,12 @@ def build_hda(node_name, description, hda_path, generate_cb):
              "many frames.",
     ))
     gen.addParmTemplate(hou.StringParmTemplate(
-        "status", "Status", 1, default_value=("",), is_hidden=True,   # shown by status_label
+        # Read by the Timeline panel, and shown under the node via DescriptiveParmName.
+        "status", "Status", 1, default_value=("",), is_hidden=True,
     ))
     gen.addParmTemplate(hou.StringParmTemplate(
-        "clip_info", "Clip", 1, default_value=("",), is_hidden=True,   # shown by clip_label
+        # Read by the Timeline panel's footer.
+        "clip_info", "Clip", 1, default_value=("",), is_hidden=True,
     ))
     gen.addParmTemplate(hou.FloatParmTemplate(
         "scene_fps", "Scene FPS", 1,
@@ -1044,23 +1046,6 @@ def build_hda(node_name, description, hda_path, generate_cb):
         is_hidden=True,
         help="The scene FPS, as an expression, so the segment lengths in seconds follow "
              "it without anything having to refresh them.",
-    ))
-    gen.addParmTemplate(hou.LabelParmTemplate(
-        "status_label", "Status",
-        # A label parm centres its text within each column, so one wide column puts it
-        # in the middle. Sixteen columns leave the value in a narrow first one, hard left.
-        column_labels=('`chs("status")`',) + ("",) * 15,
-        help="Live job state: `Queued`, `Running (Ns)`, `Downloading`, `Done (Ns)`, "
-             "`Done (cached)`, `Failed`, `Cancelled`.\nAlso shows the "
-             "__Test Connection__ result, and the seam measurement after "
-             "__Regenerate From Here__.",
-    ))
-    gen.addParmTemplate(hou.LabelParmTemplate(
-        "clip_label", "Clip",
-        # A label parm centres its text within each column, so one wide column puts it
-        # in the middle. Sixteen columns leave the value in a narrow first one, hard left.
-        column_labels=('`chs("clip_info")`',) + ("",) * 15,
-        help="Length of the last generated clip in seconds, scene frames and samples.",
     ))
     ptg.append(gen)
 

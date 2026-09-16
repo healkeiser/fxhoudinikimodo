@@ -198,22 +198,6 @@
             help    "The scene FPS, as an expression, so the segment lengths in seconds follow it without anything having to refresh them."
             range   { 0 10 }
         }
-        parm {
-            name    "status_label"
-            label   "Status"
-            type    label
-            size    16
-            default { "`chs(\"status\")`" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" }
-            help    "Live job state: `Queued`, `Running (Ns)`, `Downloading`, `Done (Ns)`, `Done (cached)`, `Failed`, `Cancelled`.\nAlso shows the __Test Connection__ result, and the seam measurement after __Regenerate From Here__."
-        }
-        parm {
-            name    "clip_label"
-            label   "Clip"
-            type    label
-            size    16
-            default { "`chs(\"clip_info\")`" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" }
-            help    "Length of the last generated clip in seconds, scene frames and samples."
-        }
     }
 
     group {

@@ -115,6 +115,21 @@ def test_deferral_waits_for_the_mouse_release():
     assert "NoButton" in fn, "later() must compare against Qt.NoButton"
 
 
+def test_status_text_is_always_elided():
+    """Status carries server errors verbatim and they can be a paragraph long. A label
+    left to size itself widens the footer and drags the whole panel out with it, so every
+    writer must go through _set_status, which elides to STATUS_W and puts the full text
+    in the tooltip."""
+    src = _read(os.path.join(PKG, "widget.py"))
+    setter = _func_source(src, "_set_status")
+    assert "elidedText" in setter, "_set_status must elide"
+    assert "setToolTip" in setter, "_set_status must keep the full text in the tooltip"
+    assert "STATUS_W" in src, "the status label needs a width cap"
+    body = src.replace(setter, "")
+    assert "status_label.setText(" not in body, (
+        "write status through _set_status, not status_label.setText")
+
+
 def test_source_is_ascii():
     """Escapes, not literal glyphs, so the files survive any encoding they pass through."""
     for name, src in _modules():

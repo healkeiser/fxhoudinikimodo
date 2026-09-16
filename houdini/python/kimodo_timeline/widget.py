@@ -23,6 +23,7 @@ PROMPT_H = 46
 TRACK_H = 20
 PAD_R = 12
 EDGE_GRAB = 6        # px from a segment's right edge that counts as "resize"
+STATUS_W = 320       # status text is elided to this; errors can be arbitrarily long
 KEY_R = 6            # key marker half-size
 MIN_PPF, MAX_PPF = 0.25, 240.0   # zoom limits, pixels per frame
 FIT_MARGIN = 0.15                # fit leaves this much of the total free on the right
@@ -618,6 +619,7 @@ class TimelineWidget(QtWidgets.QWidget):
         self.node = None
         self._last_json = None
         self._last_selected = None
+        self._status_text = None
 
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(6, 6, 6, 6); lay.setSpacing(6)
@@ -686,6 +688,14 @@ class TimelineWidget(QtWidgets.QWidget):
         foot.addWidget(self.progress)
         self.status_label = QtWidgets.QLabel("")
         self.status_label.setStyleSheet("color: #9a9a9a")
+        # Status carries server errors verbatim, which can be a paragraph. Left to size
+        # itself the label widens the footer and drags the whole panel out with it, so
+        # cap it, let it shrink below its hint, and keep the full text in the tooltip.
+        self.status_label.setMaximumWidth(STATUS_W)
+        self.status_label.setMinimumWidth(0)
+        self.status_label.setSizePolicy(QtWidgets.QSizePolicy.Ignored,
+                                        QtWidgets.QSizePolicy.Preferred)
+        self.status_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
         foot.addWidget(self.status_label)
         self.cancel_btn = QtWidgets.QPushButton("Cancel")
         self.cancel_btn.clicked.connect(lambda: later(lambda: self.node and bridge.cancel(self.node)))
@@ -707,6 +717,17 @@ class TimelineWidget(QtWidgets.QWidget):
         self._play_timer = QtCore.QTimer(self); self._play_timer.setInterval(33)
         self._play_timer.timeout.connect(self._sync_playhead); self._play_timer.start()
         self._tick()
+
+    def _set_status(self, text):
+        """Show `text` elided to STATUS_W, with the whole thing in the tooltip."""
+        text = text or ""
+        if text == self._status_text:
+            return                      # runs on the 400 ms tick; do not re-elide constantly
+        self._status_text = text
+        self.status_label.setToolTip(text)
+        fm = self.status_label.fontMetrics()
+        width = min(self.status_label.width() or STATUS_W, STATUS_W)
+        self.status_label.setText(fm.elidedText(text, QtCore.Qt.ElideRight, width))
 
     def _sync_playhead(self):
         """Follow the Houdini frame at ~30 fps. One HOM call, repaint only on a change."""
@@ -768,7 +789,7 @@ class TimelineWidget(QtWidgets.QWidget):
             # not enough: the canvas would go on painting the dead node's segments.
             # Guarded so this costs nothing on the ticks after the first.
             self.warn_label.setText("")
-            self.status_label.setText("")
+            self._set_status("")
             self.total_label.setText("")
             self.progress.setVisible(False)
             if self.canvas.tl.segments or any(self.canvas.tl.tracks.values()):
@@ -786,7 +807,7 @@ class TimelineWidget(QtWidgets.QWidget):
             self._refresh_total()
             self.canvas.update()
         st = bridge.status(self.node)
-        self.status_label.setText(st)
+        self._set_status(st)
         prog = bridge.progress(self.node)
         self.progress.setVisible(prog is not None)
         if prog is not None:
@@ -848,12 +869,12 @@ class TimelineWidget(QtWidgets.QWidget):
         try:
             from . import regen
         except ImportError as e:
-            self.status_label.setText("regen unavailable: %s" % e)
+            self._set_status("regen unavailable: %s" % e)
             return
         try:
-            self.status_label.setText(regen.regenerate(self.node, index, to_end=to_end))
+            self._set_status(regen.regenerate(self.node, index, to_end=to_end))
         except Exception as e:
-            self.status_label.setText(str(e))
+            self._set_status(str(e))
             if hou.isUIAvailable():
                 hou.ui.setStatusMessage("Kimodo: %s" % e, severity=hou.severityType.Error)
 
@@ -861,6 +882,6 @@ class TimelineWidget(QtWidgets.QWidget):
         if self.node is None:
             return
         if not self.canvas.tl.segments:
-            self.status_label.setText("Add at least one segment"); return
+            self._set_status("Add at least one segment"); return
         self._write("Kimodo timeline: generate")
         bridge.generate(self.node)
