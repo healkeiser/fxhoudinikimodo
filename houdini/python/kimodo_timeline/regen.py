@@ -21,6 +21,7 @@ convention, old[:cut - n] + new, with no frames dropped.
 
 The pure functions take plain data so they can be tested without Houdini.
 """
+
 from __future__ import annotations
 
 import io
@@ -28,12 +29,20 @@ import io
 import numpy as np
 
 # every per-sample array in a Kimodo NPZ, concatenated on axis 0
-CLIP_KEYS = ("local_rot_mats", "global_rot_mats", "posed_joints",
-             "root_positions", "smooth_root_pos", "foot_contacts",
-             "global_root_heading")
+CLIP_KEYS = (
+    "local_rot_mats",
+    "global_rot_mats",
+    "posed_joints",
+    "root_positions",
+    "smooth_root_pos",
+    "foot_contacts",
+    "global_root_heading",
+)
 
 
-def cut_sample(frames_per_segment, seg_index: int, scene_fps: float, source_fps: float) -> int:
+def cut_sample(
+    frames_per_segment, seg_index: int, scene_fps: float, source_fps: float
+) -> int:
     """Clip sample where `seg_index` begins. Segment lengths are in scene frames."""
     scene = sum(int(f) for f in frames_per_segment[:seg_index])
     return int(round(scene * source_fps / scene_fps))
@@ -47,10 +56,14 @@ def continue_payload(npz, cut: int, n: int) -> dict:
     conversion applied on output, so the round trip is lossless.
     """
     if cut < n:
-        raise ValueError("need %d samples before the cut, cut is at %d" % (n, cut))
+        raise ValueError(
+            "need %d samples before the cut, cut is at %d" % (n, cut)
+        )
     head = slice(cut - n, cut)
-    return {"local_rot_mats": npz["local_rot_mats"][head].tolist(),
-            "root_positions": npz["root_positions"][head].tolist()}
+    return {
+        "local_rot_mats": npz["local_rot_mats"][head].tolist(),
+        "root_positions": npz["root_positions"][head].tolist(),
+    }
 
 
 def splice(old, new, cut: int, n: int, resume_at=None) -> dict:
@@ -63,11 +76,11 @@ def splice(old, new, cut: int, n: int, resume_at=None) -> dict:
     out = {}
     for k in CLIP_KEYS:
         if k in old and k in new:
-            parts = [old[k][:cut - n], new[k]]
+            parts = [old[k][: cut - n], new[k]]
             if resume_at is not None:
                 parts.append(old[k][resume_at:])
             out[k] = np.concatenate(parts, axis=0)
-    for k in old:                            # anything not per-sample rides along
+    for k in old:  # anything not per-sample rides along
         if k not in out:
             out[k] = old[k]
     return out
@@ -84,7 +97,9 @@ def mean_step(clip) -> float:
     Below 1.0x means the join moves less than the motion around it, which is the point at
     which it stops reading as a cut.
     """
-    d = np.linalg.norm(np.diff(clip["posed_joints"], axis=0), axis=-1).max(axis=1)
+    d = np.linalg.norm(np.diff(clip["posed_joints"], axis=0), axis=-1).max(
+        axis=1
+    )
     return float(d.mean())
 
 
@@ -101,11 +116,20 @@ def tail_pin(npz, cut_end: int, n: int, at_index: int) -> list:
     rot = npz["global_rot_mats"][head].tolist()
     root = npz["smooth_root_pos"][head][:, [0, 2]].tolist()
     fi = list(range(at_index, at_index + n))
-    common = {"frame_indices": fi, "global_joints_positions": pos,
-              "global_joints_rots": rot, "smooth_root_2d": root}
-    return [dict(common, type="fullbody-global"),
-            dict(common, type="ee-global",
-                 joint_names=["LeftHand", "RightHand", "LeftFoot", "RightFoot"])]
+    common = {
+        "frame_indices": fi,
+        "global_joints_positions": pos,
+        "global_joints_rots": rot,
+        "smooth_root_2d": root,
+    }
+    return [
+        dict(common, type="fullbody-global"),
+        dict(
+            common,
+            type="ee-global",
+            joint_names=["LeftHand", "RightHand", "LeftFoot", "RightFoot"],
+        ),
+    ]
 
 
 def samples_for(frames: int, scene_fps: float, source_fps: float) -> int:
@@ -118,8 +142,9 @@ def load_npz_bytes(blob: bytes) -> dict:
     return dict(np.load(io.BytesIO(blob)))
 
 
-# -- Houdini side -------------------------------------------------------------
+###### Houdini side
 # Below the pure functions so the module still imports without hou.
+
 
 def regenerate(node, seg_index: int, to_end: bool = False):
     """Re-roll segment `seg_index` (0-based), in place.
@@ -138,7 +163,7 @@ def regenerate(node, seg_index: int, to_end: bool = False):
     and the final seam measurement land on the node's Status parm, which the Timeline
     panel displays.
     """
-    import os
+    from pathlib import Path
 
     import hou
     import requests
@@ -149,12 +174,18 @@ def regenerate(node, seg_index: int, to_end: bool = False):
     if not tl.segments:
         raise ValueError("This node has no timeline to regenerate from.")
     if not 0 <= seg_index < len(tl.segments):
-        raise ValueError("Segment %d is outside the timeline." % (seg_index + 1))
+        raise ValueError(
+            "Segment %d is outside the timeline." % (seg_index + 1)
+        )
     if seg_index == 0:
-        raise ValueError("Segment 1 has no earlier motion to continue from; use Generate.")
+        raise ValueError(
+            "Segment 1 has no earlier motion to continue from; use Generate."
+        )
     src = node.parm("npz_path").eval()
-    if not src or not os.path.exists(src):
-        raise ValueError("No generated clip on this node yet. Press Generate first.")
+    if not src or not Path(src).exists():
+        raise ValueError(
+            "No generated clip on this node yet. Press Generate first."
+        )
 
     n = max(1, int(tl.transition_frames))
     scene_fps = float(hou.fps())
@@ -162,7 +193,9 @@ def regenerate(node, seg_index: int, to_end: bool = False):
     frames = [s.frames for s in tl.segments]
     cut = cut_sample(frames, seg_index, scene_fps, source_fps)
 
-    old = dict(np.load(src))     # read the archive once; an NpzFile re-decompresses per lookup
+    old = dict(
+        np.load(src)
+    )  # read the archive once; an NpzFile re-decompresses per lookup
     have = old["posed_joints"].shape[0]
     # A bounds check is not enough: edited segment lengths still produce an in-range cut,
     # just the wrong one. Compare what the timeline describes against what is on disk.
@@ -171,15 +204,22 @@ def regenerate(node, seg_index: int, to_end: bool = False):
         raise ValueError(
             "The clip on disk is %d samples but this timeline describes %d. The segment "
             "lengths changed since it was generated, so the cut would land in the wrong "
-            "place. Press Generate first." % (have, expect))
+            "place. Press Generate first." % (have, expect)
+        )
     if cut - n < 1 or cut > have:
-        raise ValueError("Segment %d falls outside the clip on disk; press Generate."
-                         % (seg_index + 1))
+        raise ValueError(
+            "Segment %d falls outside the clip on disk; press Generate."
+            % (seg_index + 1)
+        )
 
     # the last segment has nothing after it, so a single re-roll and a run to the end
     # are the same thing
     single = not to_end and seg_index + 1 < len(tl.segments)
-    send = tl.segments[seg_index:seg_index + 1] if single else tl.segments[seg_index:]
+    send = (
+        tl.segments[seg_index : seg_index + 1]
+        if single
+        else tl.segments[seg_index:]
+    )
     body = {
         "segments": Timeline(send).request_segments(scene_fps),
         "transition_frames": n,
@@ -196,17 +236,25 @@ def regenerate(node, seg_index: int, to_end: bool = False):
     url = node.parm("server_url").eval().rstrip("/")
     resp = requests.post(url + "/generate", json=body, timeout=60)
     if resp.status_code == 422:
-        raise ValueError("Server rejected `continue_from`; it predates partial "
-                         "regeneration. Update kimodo_server.py and kimodo_model.py, "
-                         "then restart the api container.")
+        raise ValueError(
+            "Server rejected `continue_from`; it predates partial "
+            "regeneration. Update kimodo_server.py and kimodo_model.py, "
+            "then restart the api container."
+        )
     resp.raise_for_status()
     job = resp.json()["job_id"]
 
-    what = "segment %d" % (seg_index + 1) if single else "from segment %d" % (seg_index + 1)
+    what = (
+        "segment %d" % (seg_index + 1)
+        if single
+        else "from segment %d" % (seg_index + 1)
+    )
 
     def _merge(data, suffix):
         """Runs on the main thread when the job finishes, from the event-loop callback."""
-        blob = requests.get("%s/jobs/%s/download" % (url, job), timeout=180).content
+        blob = requests.get(
+            "%s/jobs/%s/download" % (url, job), timeout=180
+        ).content
         new = load_npz_bytes(blob)
         merged = splice(old, new, cut, n, resume_at=resume_at)
         head_at = cut - n
@@ -214,29 +262,39 @@ def regenerate(node, seg_index: int, to_end: bool = False):
         jump = seam_jump(merged, head_at)
         joins = "%.2f cm" % (jump * 100)
         worst = jump
-        if resume_at is not None:                  # a single segment has two joins
-            tail_jump = seam_jump(merged, head_at + new["posed_joints"].shape[0])
+        if resume_at is not None:  # a single segment has two joins
+            tail_jump = seam_jump(
+                merged, head_at + new["posed_joints"].shape[0]
+            )
             joins = "%.2f / %.2f cm" % (jump * 100, tail_jump * 100)
             worst = max(worst, tail_jump)
 
-        out = os.path.join(os.path.dirname(src), "%s_joined.npz" % job)
+        out = Path(src).parent / ("%s_joined.npz" % job)
         np.savez(out, **merged)
         total = merged["posed_joints"].shape[0]
         secs = total / source_fps
-        node.parm("npz_path").set(out.replace(chr(92), "/"))
+        node.parm("npz_path").set(out.as_posix())
         node.parm("clip_info").set(
             "%.2f s = %d frames @ %g fps (%d samples @ %g fps)"
-            % (secs, round(secs * scene_fps), scene_fps, total, source_fps))
+            % (secs, round(secs * scene_fps), scene_fps, total, source_fps)
+        )
         node.parm("progress").set(1.0)
-        msg = ("Regenerated %s; seam %s vs %.2f cm/sample (%.2fx)"
-               % (what, joins, normal * 100, worst / normal))
+        msg = "Regenerated %s; seam %s vs %.2f cm/sample (%.2fx)" % (
+            what,
+            joins,
+            normal * 100,
+            worst / normal,
+        )
         node.parm("status").set(msg)
         node.parm("job_id").set("")
         node.cook(force=True)
         if hou.isUIAvailable():
-            hou.ui.setStatusMessage("Kimodo: " + msg, severity=hou.severityType.ImportantMessage)
+            hou.ui.setStatusMessage(
+                "Kimodo: " + msg, severity=hou.severityType.ImportantMessage
+            )
 
     from .poller import JobWatcher
+
     node.parm("job_id").set(job)
     node.parm("progress").set(0.0)
     node.parm("status").set("Queued (%s...)" % job[:8])

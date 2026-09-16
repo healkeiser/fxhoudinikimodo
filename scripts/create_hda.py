@@ -6,52 +6,55 @@ Usage:
 
 Output: vb_kimodo_motion_1.1.hda in the repo root (packed; _add_help.py expands it into houdini/otls/).
 """
-import os
+
 import re
 import sys
+from pathlib import Path
+
 import hou
 
-_HERE     = os.path.dirname(os.path.abspath(__file__))
-_REPO     = os.path.dirname(_HERE)
+_HERE = Path(__file__).resolve().parent
+_REPO = _HERE.parent
 # _HDA_PATH is defined below, after _LIBRARY.
 
 # Embedded geometry built by scripts/build_skin.py (run it first). When present,
 # the HDA gains the skin mesh (output 0) and the A-pose skeleton (output 1).
-_SKIN_BGEO  = os.path.join(_REPO, "skin.bgeo.sc")
-_APOSE_BGEO = os.path.join(_REPO, "apose.bgeo.sc")
+_SKIN_BGEO = _REPO / "skin.bgeo.sc"
+_APOSE_BGEO = _REPO / "apose.bgeo.sc"
 
 # Kimodo SOMA models generate at this rate; exposed as the Source FPS parm default.
 _KIMODO_FPS = 30
 
 # Node icon (embedded into the HDA as its IconSVG section).
-_ICON_SVG = os.path.join(_HERE, "kimodo_icon.svg")
+_ICON_SVG = _HERE / "kimodo_icon.svg"
 
 # Node type is <namespace>::kimodo_motion::<version>; bump _VERSION for breaking UI changes.
 _NAMESPACE = "vb"
-_VERSION   = "1.1"
+_VERSION = "1.1"
 # Library file/dir name, derived from the type name the way Houdini does it.
-_LIBRARY   = "%s_kimodo_motion_%s.hda" % (_NAMESPACE, _VERSION)
-_HDA_PATH  = os.path.join(_REPO, _LIBRARY)
+_LIBRARY = "%s_kimodo_motion_%s.hda" % (_NAMESPACE, _VERSION)
+_HDA_PATH = _REPO / _LIBRARY
 
 
 def _skin_sections():
-    missing = [p for p in (_SKIN_BGEO, _APOSE_BGEO) if not os.path.exists(p)]
+    missing = [p for p in (_SKIN_BGEO, _APOSE_BGEO) if not p.exists()]
     if missing:
         raise FileNotFoundError(
             "Missing embedded geometry \u2014 run `hython scripts/build_skin.py` first:\n  "
-            + "\n  ".join(missing)
+            + "\n  ".join(str(p) for p in missing)
         )
     return {
-        "skin.bgeo.sc":  open(_SKIN_BGEO, "rb").read(),
-        "apose.bgeo.sc": open(_APOSE_BGEO, "rb").read(),
+        "skin.bgeo.sc": _SKIN_BGEO.read_bytes(),
+        "apose.bgeo.sc": _APOSE_BGEO.read_bytes(),
     }
+
 
 _NPZ_DEFAULT = sys.argv[1] if len(sys.argv) > 1 else ""
 
 # The SOMA77 skeleton data (joints, parents, neutral pose, T-pose rotations) is the
 # single source of truth in scripts/_soma77.py; it is embedded verbatim as the HDA's
 # PythonModule section and read by each cook script via hou.pwd().parent().type().hdaModule().
-_MODULE_SRC = open(os.path.join(_HERE, "_soma77.py"), encoding="utf-8").read()
+_MODULE_SRC = (_HERE / "_soma77.py").read_text(encoding="utf-8")
 
 # Segment multiparm <-> timeline_json. The JSON stays canonical because it also holds
 # the pose-key tracks, which have no sensible multiparm form; the multiparm is a real
@@ -694,7 +697,7 @@ for i, parent in enumerate(SOMA77_PARENTS):
 # (used for the A-pose skeleton and the skin mesh). Reads the section bytes from
 # the HDA definition, writes them to a temp file, and loads them - avoids opdef:
 # path resolution and keeps the HDA self-contained.
-_SECTION_LOADER = '''import os, base64, tempfile, hou
+_SECTION_LOADER = """import os, base64, tempfile, hou
 node = hou.pwd()
 _err = node.parent().parm("last_error").eval().strip()
 if _err:
@@ -713,7 +716,7 @@ finally:
         os.remove(path)
     except OSError:
         pass
-'''
+"""
 
 # Open Timeline: focus an existing Kimodo Timeline pane tab or float a new one, and select
 # this node so the panel picks it up.
@@ -785,7 +788,6 @@ node.type().hdaModule().run_regenerate(node, int(kwargs["script_multiparm_index"
 """
 
 
-
 # Runs when a node of this type is created: node shape, and the first segment.
 _ON_CREATED = r"""
 node = kwargs["node"]
@@ -826,7 +828,7 @@ def build_hda(node_name, description, hda_path, generate_cb):
     straight across (0 -> 0, 1 -> 1, 2 -> 2):
       0 Rest Geometry (skin mesh)   1 Capture Pose (A-pose)   2 Animated Pose   3 T-Pose
     """
-    skin_sections = _skin_sections()   # {section_name: bytes} from build_skin.py
+    skin_sections = _skin_sections()  # {section_name: bytes} from build_skin.py
     obj = hou.node("/obj")
     geo = obj.createNode("geo", node_name + "_setup")
     geo.deleteItems(geo.children())
@@ -843,8 +845,10 @@ def build_hda(node_name, description, hda_path, generate_cb):
     # Houdini takes each output connector's colour from its internal Output SOP, so these
     # match kinefx::characterio::2.0 and read the same way in the network editor.
     # Index 1 (Capture Pose) is SideFX's default grey, so it is left alone.
-    OUT_COLORS = {0: (0.584, 0.776, 1.0),      # Rest Geometry  - light blue
-                  2: (0.976, 0.780, 0.263)}    # Animated Pose  - amber
+    OUT_COLORS = {
+        0: (0.584, 0.776, 1.0),  # Rest Geometry  - light blue
+        2: (0.976, 0.780, 0.263),
+    }  # Animated Pose  - amber
 
     def _out(idx, src):
         o = subnet.createNode("output", "output%d" % idx)
@@ -870,14 +874,15 @@ def build_hda(node_name, description, hda_path, generate_cb):
 
     # createDigitalAsset appends to an existing library file; start clean so the packed
     # file holds exactly one definition (the one _add_help.py picks up).
-    if os.path.exists(hda_path):
-        os.remove(hda_path)
+    if hda_path.exists():
+        hda_path.unlink()
     hda_node = subnet.createDigitalAsset(
-        name="%s::%s::%s" % (_NAMESPACE, node_name, _VERSION),   # version must be in the name
-        hda_file_name=hda_path,
+        name="%s::%s::%s"
+        % (_NAMESPACE, node_name, _VERSION),  # version must be in the name
+        hda_file_name=str(hda_path),
         description=description,
         min_num_inputs=0,
-        max_num_inputs=2,   # input 0: geometry -> root2d; input 1: posed skeleton -> fullbody/EE
+        max_num_inputs=2,  # input 0: geometry -> root2d; input 1: posed skeleton -> fullbody/EE
         version=_VERSION,
     )
     hda_def = hda_node.type().definition()
@@ -885,10 +890,16 @@ def build_hda(node_name, description, hda_path, generate_cb):
     # Node icon: the SVG in scripts/kimodo_icon.svg, embedded as the IconSVG section.
     # Namespaced opdef form: opdef:/<namespace>::Sop/<name>::<version>?IconSVG
     scope, ns, base, ver = hda_node.type().nameComponents()
-    icon_path = "opdef:/%sSop/%s%s?IconSVG" % (ns + "::" if ns else "", base, "::" + ver if ver else "")
-    hda_def.addSection("IconSVG", open(_ICON_SVG, encoding="utf-8").read())
+    icon_path = "opdef:/%sSop/%s%s?IconSVG" % (
+        ns + "::" if ns else "",
+        base,
+        "::" + ver if ver else "",
+    )
+    hda_def.addSection("IconSVG", _ICON_SVG.read_text(encoding="utf-8"))
     hda_def.setIcon(icon_path)
-    hda_def.addSection("PythonModule", _MODULE_SRC)   # SOMA77 data for the cook scripts
+    hda_def.addSection(
+        "PythonModule", _MODULE_SRC
+    )  # SOMA77 data for the cook scripts
     hda_def.addSection("OnCreated", _ON_CREATED)
     hda_def.setExtraFileOption("OnCreated/IsPython", True)
     # Shown under the node in the network editor (Type Properties > Node > Descriptive Parm).
@@ -896,334 +907,595 @@ def build_hda(node_name, description, hda_path, generate_cb):
     # Store the binary bgeo as base64 text so the section round-trips cleanly
     # (HDASection.contents() returns str; raw bytes don't survive that).
     import base64
+
     for sname, data in skin_sections.items():
         hda_def.addSection(sname, base64.b64encode(data).decode("ascii"))
 
     # Tab menu: Kimodo instead of the generic "Digital Assets" submenu.
     shelf = hda_def.sections().get("Tools.shelf")
     if shelf is not None:
-        xml = re.sub(r"<toolSubmenu>.*?</toolSubmenu>", "<toolSubmenu>Kimodo</toolSubmenu>",
-                     shelf.contents(), count=1)
+        xml = re.sub(
+            r"<toolSubmenu>.*?</toolSubmenu>",
+            "<toolSubmenu>Kimodo</toolSubmenu>",
+            shelf.contents(),
+            count=1,
+        )
         hda_def.addSection("Tools.shelf", xml)
 
-    # -- parameter interface --------------------------------------------------
-    ptg = hou.ParmTemplateGroup()   # start fresh - no inherited subnet parms
-    timeline_owns = '{ has_timeline == 1 }'   # the Timeline panel drives these while it has data
+    ###### Parameter interface
+    ptg = hou.ParmTemplateGroup()  # start fresh - no inherited subnet parms
+    timeline_owns = "{ has_timeline == 1 }"  # the Timeline panel drives these while it has data
 
     # Tab: Generate - the everyday controls.
-    gen = hou.FolderParmTemplate("fld_generate", "Generate", folder_type=hou.folderType.Tabs)
-    gen.addParmTemplate(hou.ButtonParmTemplate(
-        "open_timeline", "Open Timeline",
-        script_callback=_OPEN_TIMELINE_CB,
-        script_callback_language=hou.scriptLanguage.Python,
-        is_label_hidden=True, join_with_next=True,
-        help="Open the __Kimodo Timeline__ panel for this node: prompt segments laid end to "
-             "end, transitions, and Full Body / hand / foot pose tracks.\nWhile a timeline "
-             "exists it owns Prompt, Duration and the pose parameters below.\n\n"
-             "__A segment is weaker in a timeline than on its own.__ A segment spends its "
-             "opening transitioning out of the previous motion, so it has less time left for "
-             "its own action. Measured: _a person stands up and turns around_ turns 173 "
-             "deg generated alone, but only 18 deg as segment 6 of 8. Generate a segment on its "
-             "own first to check it works, then add it to the timeline.\n"
-             "If a segment comes out weak, __split it__ rather than lengthen it: as one "
-             "2.25 s segment that turn managed 64 deg, at 3.50 s it managed 154 deg, but split "
-             "into _stands up from a squat_ + _turns around to face the opposite "
-             "direction_ it managed 193 deg for the same total time.",
-    ))
-    gen.addParmTemplate(hou.ButtonParmTemplate(
-        "generate", "Generate",
-        script_callback=generate_cb,
-        script_callback_language=hou.scriptLanguage.Python,
-        is_label_hidden=True, join_with_next=True,
-        help="Send the prompt to the server. Houdini stays interactive; the node recooks "
-             "when the clip has downloaded.\nProgress shows in __Status__, under the node, "
-             "and as a bar in the Kimodo Timeline panel. __Cancel__ stops it.",
-    ))
-    gen.addParmTemplate(hou.ButtonParmTemplate(
-        "cancel", "Cancel",
-        script_callback=_CANCEL_CB,
-        script_callback_language=hou.scriptLanguage.Python,
-        is_label_hidden=True,
-        help="Cancel the queued job or discard the running one.",
-    ))
-    gen.addParmTemplate(hou.MenuParmTemplate(
-        "model", "Model",
-        ("Kimodo-SOMA-RP-v1.1", "Kimodo-SOMA-SEED-v1.1", "Kimodo-SOMA-RP-v1"),
-        default_value=0,
-        help="Kimodo checkpoint, named _Family-Skeleton-Dataset-version_.\n"
-             "__RP__ = Bones Rigplay 1 (~700 h of mocap), the recommended default.\n"
-             "__SEED__ = BONES-SEED (288 h, public data), weaker but the benchmark's reference.",
-    ))
-    gen.addParmTemplate(hou.ToggleParmTemplate(
-        "force", "Force Regenerate",
-        default_value=True,
-        help="Bypass the server cache and run inference again even if an identical "
-             "_prompt + duration + model + constraints_ was generated before.",
-    ))
-    seg = hou.FolderParmTemplate("segments", "Segments",
-                                 folder_type=hou.folderType.ScrollingMultiparmBlock)
-    seg.setDefaultValue(1)          # a node always has at least one segment
-    seg.addParmTemplate(hou.StringParmTemplate(
-        "seg_prompt#", "Prompt", 1, default_value=("",),
-        script_callback=_SEG_SYNC_CB, script_callback_language=hou.scriptLanguage.Python,
-        help=_PROMPT_HELP,
-    ))
-    seg.addParmTemplate(hou.IntParmTemplate(
-        "seg_from#", "Frames", 1, default_value=(0,), is_hidden=True,
-        help="First scene frame of this segment, counted from __Start Frame__.",
-    ))
-    seg.addParmTemplate(hou.IntParmTemplate(
-        "seg_to#", "to", 1, default_value=(0,), is_hidden=True,
-        help="Last scene frame of this segment.",
-    ))
-    seg.addParmTemplate(hou.LabelParmTemplate(
-        "seg_range#", "Frames", join_with_next=True,
-        # same sixteen-column trick as Status: one wide column would centre the text
-        column_labels=('`chs("seg_from#")` - `chs("seg_to#")`   '
-                       '(`rint(ch("seg_frames#") / ch("scene_fps") * 100) / 100` s)',)
-                      + ("",) * 15,
-        help="Scene frames this segment occupies, counted from __Start Frame__. "
-             "Read-only: it follows the lengths above it.",
-    ))
-    seg.addParmTemplate(hou.IntParmTemplate(
-        "seg_frames#", "Length", 1, default_value=(48,),
-        min=1, max=240, min_is_strict=True, max_is_strict=False, join_with_next=True,
-        script_callback=_SEG_SYNC_CB, script_callback_language=hou.scriptLanguage.Python,
-        help="Length of this segment in scene frames.",
-    ))
-    seg.addParmTemplate(hou.ButtonParmTemplate(
-        "seg_split#", "Split", script_callback=_SEG_SPLIT_CB,
-        script_callback_language=hou.scriptLanguage.Python, join_with_next=True,
-        help="Cut this segment in two at the playhead, keeping the prompt on both halves.",
-    ))
-    seg.addParmTemplate(hou.ButtonParmTemplate(
-        "seg_regen#", "Regenerate", script_callback=_SEG_REGEN_CB,
-        script_callback_language=hou.scriptLanguage.Python, join_with_next=True,
-        help="Re-roll this segment alone. Everything before and after it is untouched and "
-             "the clip keeps its length.\n"
-             "The previous segment's tail is sent back as the seam and this segment's own "
-             "tail is pinned to the frames the next one was generated against, so both joins "
-             "stay continuous; measured at 0.80x and 0.39x of the clip's own per-sample motion.\n"
-             "Much cheaper than Generate, which re-runs the whole clip. Blocks until done.\n"
-             "Not available on the first segment, which has no earlier motion to continue from.",
-    ))
-    seg.addParmTemplate(hou.ButtonParmTemplate(
-        "seg_regen_end#", "From Here", script_callback=_SEG_REGEN_END_CB,
-        script_callback_language=hou.scriptLanguage.Python,
-        help="Re-roll this segment and every segment after it, keeping everything before it. Use this when the change should carry through the rest of the clip; use __Regenerate__ when only this segment is wrong.",
-    ))
+    gen = hou.FolderParmTemplate(
+        "fld_generate", "Generate", folder_type=hou.folderType.Tabs
+    )
+    gen.addParmTemplate(
+        hou.ButtonParmTemplate(
+            "open_timeline",
+            "Open Timeline",
+            script_callback=_OPEN_TIMELINE_CB,
+            script_callback_language=hou.scriptLanguage.Python,
+            is_label_hidden=True,
+            join_with_next=True,
+            help="Open the __Kimodo Timeline__ panel for this node: prompt segments laid end to "
+            "end, transitions, and Full Body / hand / foot pose tracks.\nWhile a timeline "
+            "exists it owns Prompt, Duration and the pose parameters below.\n\n"
+            "__A segment is weaker in a timeline than on its own.__ A segment spends its "
+            "opening transitioning out of the previous motion, so it has less time left for "
+            "its own action. Measured: _a person stands up and turns around_ turns 173 "
+            "deg generated alone, but only 18 deg as segment 6 of 8. Generate a segment on its "
+            "own first to check it works, then add it to the timeline.\n"
+            "If a segment comes out weak, __split it__ rather than lengthen it: as one "
+            "2.25 s segment that turn managed 64 deg, at 3.50 s it managed 154 deg, but split "
+            "into _stands up from a squat_ + _turns around to face the opposite "
+            "direction_ it managed 193 deg for the same total time.",
+        )
+    )
+    gen.addParmTemplate(
+        hou.ButtonParmTemplate(
+            "generate",
+            "Generate",
+            script_callback=generate_cb,
+            script_callback_language=hou.scriptLanguage.Python,
+            is_label_hidden=True,
+            join_with_next=True,
+            help="Send the prompt to the server. Houdini stays interactive; the node recooks "
+            "when the clip has downloaded.\nProgress shows in __Status__, under the node, "
+            "and as a bar in the Kimodo Timeline panel. __Cancel__ stops it.",
+        )
+    )
+    gen.addParmTemplate(
+        hou.ButtonParmTemplate(
+            "cancel",
+            "Cancel",
+            script_callback=_CANCEL_CB,
+            script_callback_language=hou.scriptLanguage.Python,
+            is_label_hidden=True,
+            help="Cancel the queued job or discard the running one.",
+        )
+    )
+    gen.addParmTemplate(
+        hou.MenuParmTemplate(
+            "model",
+            "Model",
+            (
+                "Kimodo-SOMA-RP-v1.1",
+                "Kimodo-SOMA-SEED-v1.1",
+                "Kimodo-SOMA-RP-v1",
+            ),
+            default_value=0,
+            help="Kimodo checkpoint, named _Family-Skeleton-Dataset-version_.\n"
+            "__RP__ = Bones Rigplay 1 (~700 h of mocap), the recommended default.\n"
+            "__SEED__ = BONES-SEED (288 h, public data), weaker but the benchmark's reference.",
+        )
+    )
+    gen.addParmTemplate(
+        hou.ToggleParmTemplate(
+            "force",
+            "Force Regenerate",
+            default_value=True,
+            help="Bypass the server cache and run inference again even if an identical "
+            "_prompt + duration + model + constraints_ was generated before.",
+        )
+    )
+    seg = hou.FolderParmTemplate(
+        "segments",
+        "Segments",
+        folder_type=hou.folderType.ScrollingMultiparmBlock,
+    )
+    seg.setDefaultValue(1)  # a node always has at least one segment
+    seg.addParmTemplate(
+        hou.StringParmTemplate(
+            "seg_prompt#",
+            "Prompt",
+            1,
+            default_value=("",),
+            script_callback=_SEG_SYNC_CB,
+            script_callback_language=hou.scriptLanguage.Python,
+            help=_PROMPT_HELP,
+        )
+    )
+    seg.addParmTemplate(
+        hou.IntParmTemplate(
+            "seg_from#",
+            "Frames",
+            1,
+            default_value=(0,),
+            is_hidden=True,
+            help="First scene frame of this segment, counted from __Start Frame__.",
+        )
+    )
+    seg.addParmTemplate(
+        hou.IntParmTemplate(
+            "seg_to#",
+            "to",
+            1,
+            default_value=(0,),
+            is_hidden=True,
+            help="Last scene frame of this segment.",
+        )
+    )
+    seg.addParmTemplate(
+        hou.LabelParmTemplate(
+            "seg_range#",
+            "Frames",
+            join_with_next=True,
+            # same sixteen-column trick as Status: one wide column would centre the text
+            column_labels=(
+                '`chs("seg_from#")` - `chs("seg_to#")`   '
+                '(`rint(ch("seg_frames#") / ch("scene_fps") * 100) / 100` s)',
+            )
+            + ("",) * 15,
+            help="Scene frames this segment occupies, counted from __Start Frame__. "
+            "Read-only: it follows the lengths above it.",
+        )
+    )
+    seg.addParmTemplate(
+        hou.IntParmTemplate(
+            "seg_frames#",
+            "Length",
+            1,
+            default_value=(48,),
+            min=1,
+            max=240,
+            min_is_strict=True,
+            max_is_strict=False,
+            join_with_next=True,
+            script_callback=_SEG_SYNC_CB,
+            script_callback_language=hou.scriptLanguage.Python,
+            help="Length of this segment in scene frames.",
+        )
+    )
+    seg.addParmTemplate(
+        hou.ButtonParmTemplate(
+            "seg_split#",
+            "Split",
+            script_callback=_SEG_SPLIT_CB,
+            script_callback_language=hou.scriptLanguage.Python,
+            join_with_next=True,
+            help="Cut this segment in two at the playhead, keeping the prompt on both halves.",
+        )
+    )
+    seg.addParmTemplate(
+        hou.ButtonParmTemplate(
+            "seg_regen#",
+            "Regenerate",
+            script_callback=_SEG_REGEN_CB,
+            script_callback_language=hou.scriptLanguage.Python,
+            join_with_next=True,
+            help="Re-roll this segment alone. Everything before and after it is untouched and "
+            "the clip keeps its length.\n"
+            "The previous segment's tail is sent back as the seam and this segment's own "
+            "tail is pinned to the frames the next one was generated against, so both joins "
+            "stay continuous; measured at 0.80x and 0.39x of the clip's own per-sample motion.\n"
+            "Much cheaper than Generate, which re-runs the whole clip. Blocks until done.\n"
+            "Not available on the first segment, which has no earlier motion to continue from.",
+        )
+    )
+    seg.addParmTemplate(
+        hou.ButtonParmTemplate(
+            "seg_regen_end#",
+            "From Here",
+            script_callback=_SEG_REGEN_END_CB,
+            script_callback_language=hou.scriptLanguage.Python,
+            help="Re-roll this segment and every segment after it, keeping everything before it. Use this when the change should carry through the rest of the clip; use __Regenerate__ when only this segment is wrong.",
+        )
+    )
     gen.addParmTemplate(seg)
-    gen.addParmTemplate(hou.StringParmTemplate(
-        "prompt", "Prompt", 1,
-        default_value=("a person walks forward",),
-        tags={"editor": "1", "editorlines": "4-8"},
-        is_hidden=True,
-        help="Legacy single prompt, kept so HIPs saved before the Segments multiparm "
-             "still read. The __Segments__ above are what gets generated.",
-    ))
-    gen.addParmTemplate(hou.IntParmTemplate(
-        "duration_frames", "Duration (frames)", 1,
-        default_value=(72,),
-        min=12, max=720, min_is_strict=False, max_is_strict=False,
-        is_hidden=True,
-        help="Length of the clip in __scene frames__ at the current `$FPS` "
-             "(`72` = 3 s at 24 fps).\nConverted to seconds for Kimodo, which "
-             "generates at 30 fps; with __Retime to Scene FPS__ on you get back exactly this "
-             "many frames.",
-    ))
-    gen.addParmTemplate(hou.StringParmTemplate(
-        # Read by the Timeline panel, and shown under the node via DescriptiveParmName.
-        "status", "Status", 1, default_value=("",), is_hidden=True,
-    ))
-    gen.addParmTemplate(hou.StringParmTemplate(
-        # Read by the Timeline panel's footer.
-        "clip_info", "Clip", 1, default_value=("",), is_hidden=True,
-    ))
-    gen.addParmTemplate(hou.FloatParmTemplate(
-        "scene_fps", "Scene FPS", 1,
-        default_expression=("$FPS",),
-        default_expression_language=(hou.scriptLanguage.Hscript,),
-        is_hidden=True,
-        help="The scene FPS, as an expression, so the segment lengths in seconds follow "
-             "it without anything having to refresh them.",
-    ))
+    gen.addParmTemplate(
+        hou.StringParmTemplate(
+            "prompt",
+            "Prompt",
+            1,
+            default_value=("a person walks forward",),
+            tags={"editor": "1", "editorlines": "4-8"},
+            is_hidden=True,
+            help="Legacy single prompt, kept so HIPs saved before the Segments multiparm "
+            "still read. The __Segments__ above are what gets generated.",
+        )
+    )
+    gen.addParmTemplate(
+        hou.IntParmTemplate(
+            "duration_frames",
+            "Duration (frames)",
+            1,
+            default_value=(72,),
+            min=12,
+            max=720,
+            min_is_strict=False,
+            max_is_strict=False,
+            is_hidden=True,
+            help="Length of the clip in __scene frames__ at the current `$FPS` "
+            "(`72` = 3 s at 24 fps).\nConverted to seconds for Kimodo, which "
+            "generates at 30 fps; with __Retime to Scene FPS__ on you get back exactly this "
+            "many frames.",
+        )
+    )
+    gen.addParmTemplate(
+        hou.StringParmTemplate(
+            # Read by the Timeline panel, and shown under the node via DescriptiveParmName.
+            "status",
+            "Status",
+            1,
+            default_value=("",),
+            is_hidden=True,
+        )
+    )
+    gen.addParmTemplate(
+        hou.StringParmTemplate(
+            # Read by the Timeline panel's footer.
+            "clip_info",
+            "Clip",
+            1,
+            default_value=("",),
+            is_hidden=True,
+        )
+    )
+    gen.addParmTemplate(
+        hou.FloatParmTemplate(
+            "scene_fps",
+            "Scene FPS",
+            1,
+            default_expression=("$FPS",),
+            default_expression_language=(hou.scriptLanguage.Hscript,),
+            is_hidden=True,
+            help="The scene FPS, as an expression, so the segment lengths in seconds follow "
+            "it without anything having to refresh them.",
+        )
+    )
     ptg.append(gen)
 
     # Tab: Constraints - optional steering.
-    con = hou.FolderParmTemplate("fld_constraints", "Constraints", folder_type=hou.folderType.Tabs)
+    con = hou.FolderParmTemplate(
+        "fld_constraints", "Constraints", folder_type=hou.folderType.Tabs
+    )
     # Collapsible groups instead of separators; group_default 1 = open, 0 = closed on creation.
-    path = hou.FolderParmTemplate("grp_path", "Root Path (input 0)", folder_type=hou.folderType.Collapsible,
-                                  tags={"group_default": "1"})
-    path.addParmTemplate(hou.IntParmTemplate(
-        "path_waypoints", "Path Waypoints", 1,
-        default_value=(8,), min=0, max=64, min_is_strict=True, max_is_strict=False,
-        help="A curve or points on input 0 become a __root2d__ constraint: the root passes "
-             "through these XZ positions.\nWithout a `frame` attribute the curve is "
-             "thinned to this many points by arc length and spread evenly over the clip, so the "
-             "model keeps room to slow down or stop between them. `0` = use every "
-             "point (constant speed along the whole clip, which fights segments that should "
-             "stand still or fall, and a pelvis that glides instead of stepping).\nPoints "
-             "with an `int frame` attribute are waypoints at those scene frames, "
-             "thinned the same way: use them to constrain only the part of the clip that "
-             "should travel.",
-    ))
+    path = hou.FolderParmTemplate(
+        "grp_path",
+        "Root Path (input 0)",
+        folder_type=hou.folderType.Collapsible,
+        tags={"group_default": "1"},
+    )
+    path.addParmTemplate(
+        hou.IntParmTemplate(
+            "path_waypoints",
+            "Path Waypoints",
+            1,
+            default_value=(8,),
+            min=0,
+            max=64,
+            min_is_strict=True,
+            max_is_strict=False,
+            help="A curve or points on input 0 become a __root2d__ constraint: the root passes "
+            "through these XZ positions.\nWithout a `frame` attribute the curve is "
+            "thinned to this many points by arc length and spread evenly over the clip, so the "
+            "model keeps room to slow down or stop between them. `0` = use every "
+            "point (constant speed along the whole clip, which fights segments that should "
+            "stand still or fall, and a pelvis that glides instead of stepping).\nPoints "
+            "with an `int frame` attribute are waypoints at those scene frames, "
+            "thinned the same way: use them to constrain only the part of the clip that "
+            "should travel.",
+        )
+    )
     con.addParmTemplate(path)
-    js = hou.FolderParmTemplate("grp_json", "Constraints JSON", folder_type=hou.folderType.Collapsible,
-                                tags={"group_default": "0"})
-    js.addParmTemplate(hou.StringParmTemplate(
-        "constraints_file", "Constraints File", 1,
-        default_value=("",),
-        string_type=hou.stringParmType.FileReference,
-        file_type=hou.fileType.Any,
-        tags={"filechooser_pattern": "*.json"},
-        help="Optional Kimodo constraints JSON (e.g. exported from the Kimodo demo). "
-             "Ignored when Constraints JSON below is non-empty.",
-    ))
-    js.addParmTemplate(hou.StringParmTemplate(
-        "constraints_json", "Constraints JSON", 1,
-        default_value=("",),
-        tags={"editor": "1", "editorlines": "3-8"},
-        help="Optional inline Kimodo constraints JSON (a list of constraint dicts). "
-             "Takes precedence over __Constraints File__.\n\n__Example root path__\n"
-             '`[{"type": "root2d", "frame_indices": [0, 90], '
-             '"smooth_root_2d": [[0,0],[2,1]]}]`',
-    ))
+    js = hou.FolderParmTemplate(
+        "grp_json",
+        "Constraints JSON",
+        folder_type=hou.folderType.Collapsible,
+        tags={"group_default": "0"},
+    )
+    js.addParmTemplate(
+        hou.StringParmTemplate(
+            "constraints_file",
+            "Constraints File",
+            1,
+            default_value=("",),
+            string_type=hou.stringParmType.FileReference,
+            file_type=hou.fileType.Any,
+            tags={"filechooser_pattern": "*.json"},
+            help="Optional Kimodo constraints JSON (e.g. exported from the Kimodo demo). "
+            "Ignored when Constraints JSON below is non-empty.",
+        )
+    )
+    js.addParmTemplate(
+        hou.StringParmTemplate(
+            "constraints_json",
+            "Constraints JSON",
+            1,
+            default_value=("",),
+            tags={"editor": "1", "editorlines": "3-8"},
+            help="Optional inline Kimodo constraints JSON (a list of constraint dicts). "
+            "Takes precedence over __Constraints File__.\n\n__Example root path__\n"
+            '`[{"type": "root2d", "frame_indices": [0, 90], '
+            '"smooth_root_2d": [[0,0],[2,1]]}]`',
+        )
+    )
     con.addParmTemplate(js)
-    pose = hou.FolderParmTemplate("grp_pose", "Pose Keyframes (input 1)", folder_type=hou.folderType.Collapsible,
-                                  tags={"group_default": "1"})
-    pose.addParmTemplate(hou.ButtonParmTemplate(
-        "make_pose_rig", "Create Pose Rig",
-        script_callback=_MAKE_RIG_CB,
-        script_callback_language=hou.scriptLanguage.Python,
-        help="Drop an independent A-pose rig (+ Rig Pose) into the network and wire it to "
-             "input 1. Pose / keyframe it to author full-body / end-effector constraints.",
-    ))
-    pose.addParmTemplate(hou.StringParmTemplate(
-        "pose_keyframes", "Pose Keyframes", 1,
-        default_value=("",),
-        disable_when=timeline_owns,
-        help="Frame numbers to sample the input-1 skeleton at, e.g. `0 45 89`.\n"
-             "Empty = no pose constraint. Disabled while the Timeline panel owns the keys.",
-    ))
-    pose.addParmTemplate(hou.MenuParmTemplate(
-        "pose_type", "Pose Constraint",
-        ("Full-Body", "End-Effector"),
-        default_value=0,
-        disable_when='{ pose_keyframes == "" } ' + timeline_owns,
-        help="How to use the posed skeleton on input 1: constrain the whole body, "
-             "or only the selected hands/feet.",
-    ))
-    pose_ee = '{ pose_type != "End-Effector" } { pose_keyframes == "" } ' + timeline_owns
-    pose.addParmTemplate(hou.ToggleParmTemplate("ee_left_hand", "Left Hand", default_value=False,
-                                                disable_when=pose_ee, join_with_next=True))
-    pose.addParmTemplate(hou.ToggleParmTemplate("ee_right_hand", "Right Hand", default_value=True,
-                                                disable_when=pose_ee))
-    pose.addParmTemplate(hou.ToggleParmTemplate("ee_left_foot", "Left Foot", default_value=False,
-                                                disable_when=pose_ee, join_with_next=True))
-    pose.addParmTemplate(hou.ToggleParmTemplate("ee_right_foot", "Right Foot", default_value=False,
-                                                disable_when=pose_ee))
+    pose = hou.FolderParmTemplate(
+        "grp_pose",
+        "Pose Keyframes (input 1)",
+        folder_type=hou.folderType.Collapsible,
+        tags={"group_default": "1"},
+    )
+    pose.addParmTemplate(
+        hou.ButtonParmTemplate(
+            "make_pose_rig",
+            "Create Pose Rig",
+            script_callback=_MAKE_RIG_CB,
+            script_callback_language=hou.scriptLanguage.Python,
+            help="Drop an independent A-pose rig (+ Rig Pose) into the network and wire it to "
+            "input 1. Pose / keyframe it to author full-body / end-effector constraints.",
+        )
+    )
+    pose.addParmTemplate(
+        hou.StringParmTemplate(
+            "pose_keyframes",
+            "Pose Keyframes",
+            1,
+            default_value=("",),
+            disable_when=timeline_owns,
+            help="Frame numbers to sample the input-1 skeleton at, e.g. `0 45 89`.\n"
+            "Empty = no pose constraint. Disabled while the Timeline panel owns the keys.",
+        )
+    )
+    pose.addParmTemplate(
+        hou.MenuParmTemplate(
+            "pose_type",
+            "Pose Constraint",
+            ("Full-Body", "End-Effector"),
+            default_value=0,
+            disable_when='{ pose_keyframes == "" } ' + timeline_owns,
+            help="How to use the posed skeleton on input 1: constrain the whole body, "
+            "or only the selected hands/feet.",
+        )
+    )
+    pose_ee = (
+        '{ pose_type != "End-Effector" } { pose_keyframes == "" } '
+        + timeline_owns
+    )
+    pose.addParmTemplate(
+        hou.ToggleParmTemplate(
+            "ee_left_hand",
+            "Left Hand",
+            default_value=False,
+            disable_when=pose_ee,
+            join_with_next=True,
+        )
+    )
+    pose.addParmTemplate(
+        hou.ToggleParmTemplate(
+            "ee_right_hand",
+            "Right Hand",
+            default_value=True,
+            disable_when=pose_ee,
+        )
+    )
+    pose.addParmTemplate(
+        hou.ToggleParmTemplate(
+            "ee_left_foot",
+            "Left Foot",
+            default_value=False,
+            disable_when=pose_ee,
+            join_with_next=True,
+        )
+    )
+    pose.addParmTemplate(
+        hou.ToggleParmTemplate(
+            "ee_right_foot",
+            "Right Foot",
+            default_value=False,
+            disable_when=pose_ee,
+        )
+    )
     con.addParmTemplate(pose)
     ptg.append(con)
 
     # Tab: Output - timing and the clip file.
-    out = hou.FolderParmTemplate("fld_output", "Output", folder_type=hou.folderType.Tabs)
-    out.addParmTemplate(hou.IntParmTemplate(
-        "start_frame", "Start Frame", 1,
-        script_callback="hou.pwd().type().hdaModule().refresh_starts(hou.pwd())",
-        script_callback_language=hou.scriptLanguage.Python,
-        default_expression=("$FSTART",),
-        default_expression_language=(hou.scriptLanguage.Hscript,),
-        min=-1000, max=1000, min_is_strict=False, max_is_strict=False,
-        help="Scene frame on which the clip begins.\nThe __first__ sample holds before it, "
-             "the __last__ sample holds after the clip ends.",
-    ))
-    out.addParmTemplate(hou.StringParmTemplate(
-        "npz_path", "NPZ Path", 1,
-        default_value=(_NPZ_DEFAULT or "",),
-        string_type=hou.stringParmType.FileReference,
-        file_type=hou.fileType.Any,
-        tags={"filechooser_pattern": "*.npz"},
-        help="The clip the node reads. Set by Generate, or point it at any compatible Kimodo "
-             "NPZ by hand (no server needed).",
-    ))
-    adv = hou.FolderParmTemplate("grp_advanced", "Advanced", folder_type=hou.folderType.Collapsible,
-                                 tags={"group_default": "0"})
-    adv.addParmTemplate(hou.ToggleParmTemplate(
-        "retime", "Retime to Scene FPS",
-        default_value=True,
-        help="Map clip samples onto scene frames so the clip keeps its real duration at any "
-             "`$FPS` (nearest sample, no blending).\n__Off__ = one clip sample "
-             "per scene frame, so a 30 fps clip plays slow at 24 fps.",
-    ))
-    adv.addParmTemplate(hou.IntParmTemplate(
-        "source_fps", "Clip FPS", 1,
-        default_value=(_KIMODO_FPS,), min=1, max=120,
-        help="Frame rate Kimodo generated the clip at: `30` for the SOMA models.\n"
-             "A property of the __model__, not of your scene. Do __not__ set it to "
-             "`$FPS` or Retime becomes a no-op.",
-    ))
+    out = hou.FolderParmTemplate(
+        "fld_output", "Output", folder_type=hou.folderType.Tabs
+    )
+    out.addParmTemplate(
+        hou.IntParmTemplate(
+            "start_frame",
+            "Start Frame",
+            1,
+            script_callback="hou.pwd().type().hdaModule().refresh_starts(hou.pwd())",
+            script_callback_language=hou.scriptLanguage.Python,
+            default_expression=("$FSTART",),
+            default_expression_language=(hou.scriptLanguage.Hscript,),
+            min=-1000,
+            max=1000,
+            min_is_strict=False,
+            max_is_strict=False,
+            help="Scene frame on which the clip begins.\nThe __first__ sample holds before it, "
+            "the __last__ sample holds after the clip ends.",
+        )
+    )
+    out.addParmTemplate(
+        hou.StringParmTemplate(
+            "npz_path",
+            "NPZ Path",
+            1,
+            default_value=(_NPZ_DEFAULT or "",),
+            string_type=hou.stringParmType.FileReference,
+            file_type=hou.fileType.Any,
+            tags={"filechooser_pattern": "*.npz"},
+            help="The clip the node reads. Set by Generate, or point it at any compatible Kimodo "
+            "NPZ by hand (no server needed).",
+        )
+    )
+    adv = hou.FolderParmTemplate(
+        "grp_advanced",
+        "Advanced",
+        folder_type=hou.folderType.Collapsible,
+        tags={"group_default": "0"},
+    )
+    adv.addParmTemplate(
+        hou.ToggleParmTemplate(
+            "retime",
+            "Retime to Scene FPS",
+            default_value=True,
+            help="Map clip samples onto scene frames so the clip keeps its real duration at any "
+            "`$FPS` (nearest sample, no blending).\n__Off__ = one clip sample "
+            "per scene frame, so a 30 fps clip plays slow at 24 fps.",
+        )
+    )
+    adv.addParmTemplate(
+        hou.IntParmTemplate(
+            "source_fps",
+            "Clip FPS",
+            1,
+            default_value=(_KIMODO_FPS,),
+            min=1,
+            max=120,
+            help="Frame rate Kimodo generated the clip at: `30` for the SOMA models.\n"
+            "A property of the __model__, not of your scene. Do __not__ set it to "
+            "`$FPS` or Retime becomes a no-op.",
+        )
+    )
     out.addParmTemplate(adv)
     ptg.append(out)
 
     # Tab: Server - set once.
-    srv = hou.FolderParmTemplate("fld_server", "Server", folder_type=hou.folderType.Tabs)
-    srv.addParmTemplate(hou.StringParmTemplate(
-        "server_url", "API Server URL", 1,
-        default_value=("http://localhost:8001",),
-        join_with_next=True,
-        help="URL of the running `kimodo_server`, e.g. "
-             "`http://localhost:8001`.\nPoint at the GPU host if it runs elsewhere.",
-    ))
-    srv.addParmTemplate(hou.ButtonParmTemplate(
-        "test_connection", "Test Connection",
-        script_callback=_TEST_CB,
-        script_callback_language=hou.scriptLanguage.Python,
-        help="Ping the server's /health endpoint and report in Status.",
-    ))
-    srv.addParmTemplate(hou.StringParmTemplate(
-        "download_dir", "Download Dir", 1,
-        default_value=("$HIP/kimodo_cache",),
-        string_type=hou.stringParmType.FileReference,
-        file_type=hou.fileType.Directory,
-        help="Local folder where generated NPZ files are downloaded from the server.",
-    ))
+    srv = hou.FolderParmTemplate(
+        "fld_server", "Server", folder_type=hou.folderType.Tabs
+    )
+    srv.addParmTemplate(
+        hou.StringParmTemplate(
+            "server_url",
+            "API Server URL",
+            1,
+            default_value=("http://localhost:8001",),
+            join_with_next=True,
+            help="URL of the running `kimodo_server`, e.g. "
+            "`http://localhost:8001`.\nPoint at the GPU host if it runs elsewhere.",
+        )
+    )
+    srv.addParmTemplate(
+        hou.ButtonParmTemplate(
+            "test_connection",
+            "Test Connection",
+            script_callback=_TEST_CB,
+            script_callback_language=hou.scriptLanguage.Python,
+            help="Ping the server's /health endpoint and report in Status.",
+        )
+    )
+    srv.addParmTemplate(
+        hou.StringParmTemplate(
+            "download_dir",
+            "Download Dir",
+            1,
+            default_value=("$HIP/kimodo_cache",),
+            string_type=hou.stringParmType.FileReference,
+            file_type=hou.fileType.Directory,
+            help="Local folder where generated NPZ files are downloaded from the server.",
+        )
+    )
     ptg.append(srv)
 
     # Hidden plumbing.
-    ptg.append(hou.StringParmTemplate("job_id", "Job ID", 1, default_value=("",), is_hidden=True))
+    ptg.append(
+        hou.StringParmTemplate(
+            "job_id", "Job ID", 1, default_value=("",), is_hidden=True
+        )
+    )
     # Last failure message; the cook raises it as a node error. Cleared when Generate starts.
-    ptg.append(hou.StringParmTemplate("last_error", "Last Error", 1, default_value=("",), is_hidden=True))
+    ptg.append(
+        hou.StringParmTemplate(
+            "last_error", "Last Error", 1, default_value=("",), is_hidden=True
+        )
+    )
     # 0..1 while a job runs (server-reported denoising progress); the Timeline panel draws it.
-    ptg.append(hou.FloatParmTemplate("progress", "Progress", 1, default_value=(0.0,), min=0.0, max=1.0, is_hidden=True))
+    ptg.append(
+        hou.FloatParmTemplate(
+            "progress",
+            "Progress",
+            1,
+            default_value=(0.0,),
+            min=0.0,
+            max=1.0,
+            is_hidden=True,
+        )
+    )
     # Root path canonicalisation written by Generate: (origin x, origin z, heading angle). The
     # cook applies the inverse so the generated motion lands on the authored curve.
-    ptg.append(hou.FloatParmTemplate("path_xform", "Path Transform", 3, default_value=(0.0, 0.0, 0.0), is_hidden=True))
-    ptg.append(hou.StringParmTemplate("timeline_json", "Timeline", 1, default_value=("",), is_hidden=True,
-                                      tags={"editor": "1"}))
+    ptg.append(
+        hou.FloatParmTemplate(
+            "path_xform",
+            "Path Transform",
+            3,
+            default_value=(0.0, 0.0, 0.0),
+            is_hidden=True,
+        )
+    )
+    ptg.append(
+        hou.StringParmTemplate(
+            "timeline_json",
+            "Timeline",
+            1,
+            default_value=("",),
+            is_hidden=True,
+            tags={"editor": "1"},
+        )
+    )
     # Mirror of "timeline_json is non-empty" for disablewhen rules (a JSON blob is not a
     # value the conditional parser can compare against).
-    ptg.append(hou.ToggleParmTemplate("has_timeline", "Has Timeline", default_value=False, is_hidden=True))
-    ptg.append(hou.IntParmTemplate(
-        "frame_ref", "Frame", 1,
-        default_expression=("$F",),
-        default_expression_language=(hou.scriptLanguage.Hscript,),
-        is_hidden=True,
-    ))
+    ptg.append(
+        hou.ToggleParmTemplate(
+            "has_timeline", "Has Timeline", default_value=False, is_hidden=True
+        )
+    )
+    ptg.append(
+        hou.IntParmTemplate(
+            "frame_ref",
+            "Frame",
+            1,
+            default_expression=("$F",),
+            default_expression_language=(hou.scriptLanguage.Hscript,),
+            is_hidden=True,
+        )
+    )
 
     hda_def.setParmTemplateGroup(ptg)
-    hda_def.save(hda_path)
+    hda_def.save(str(hda_path))
 
     # Output connector labels live in the DialogScript as `outputlabel N "..."`
     # lines (right after the inputlabel block); inject them and re-save.
     ds = hda_def.sections()["DialogScript"].contents().splitlines(keepends=True)
     # name the (optional) input connectors
-    _inlabels = {"1": "Root Path / Waypoints (opt)", "2": "Pose Keyframes / skeleton (opt)"}
+    _inlabels = {
+        "1": "Root Path / Waypoints (opt)",
+        "2": "Pose Keyframes / skeleton (opt)",
+    }
+
     def _relabel(line):
         s = line.lstrip()
         for n, lbl in _inlabels.items():
             if s.startswith(("inputlabel\t%s" % n, "inputlabel %s" % n)):
                 return '    inputlabel\t%s\t"%s"\n' % (n, lbl)
         return line
+
     ds = [_relabel(line) for line in ds]
     # A multiparm's count has no min/max in HOM; clamp it in the DialogScript so the
     # Segments block cannot be emptied to zero.
@@ -1231,18 +1503,30 @@ def build_hda(node_name, description, hda_path, generate_cb):
         if line.strip() == 'name    "segments"':
             for j in range(i, min(i + 6, len(ds))):
                 if ds[j].lstrip().startswith("default"):
-                    indent = ds[j][:len(ds[j]) - len(ds[j].lstrip())]
+                    indent = ds[j][: len(ds[j]) - len(ds[j].lstrip())]
                     ds.insert(j + 1, indent + "range   { 1! 100 }\n")
                     break
             break
-    after = max(i for i, line in enumerate(ds) if line.lstrip().startswith("inputlabel"))
-    inject = "".join('    outputlabel\t%d\t"%s"\n' % (i + 1, lbl) for i, lbl in enumerate(labels))
-    hda_def.addSection("DialogScript", "".join(ds[:after + 1]) + inject + "".join(ds[after + 1:]))
-    hda_def.save(hda_path)
+    after = max(
+        i for i, line in enumerate(ds) if line.lstrip().startswith("inputlabel")
+    )
+    inject = "".join(
+        '    outputlabel\t%d\t"%s"\n' % (i + 1, lbl)
+        for i, lbl in enumerate(labels)
+    )
+    hda_def.addSection(
+        "DialogScript",
+        "".join(ds[: after + 1]) + inject + "".join(ds[after + 1 :]),
+    )
+    hda_def.save(str(hda_path))
 
-    print(f"HDA saved: {hda_path}  type: {hda_node.type().name()}  outputs: {labels}")
-    print(f"  parms: {[p.name() for p in hda_def.parmTemplateGroup().parmTemplates()]}")
+    print(
+        f"HDA saved: {hda_path}  type: {hda_node.type().name()}  outputs: {labels}"
+    )
+    print(
+        f"  parms: {[p.name() for p in hda_def.parmTemplateGroup().parmTemplates()]}"
+    )
 
 
-# -- build the HDA ------------------------------------------------------------
+# At module scope on purpose: `hython scripts/create_hda.py` is the whole interface.
 build_hda("kimodo_motion", "Kimodo Motion Generator", _HDA_PATH, _GENERATE_CB)

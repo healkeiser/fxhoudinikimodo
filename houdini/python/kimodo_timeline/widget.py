@@ -6,34 +6,42 @@ View controls follow the usual DCC timeline conventions:
   F / Home / Fit   fit the whole timeline
   left-drag ruler  scrub the Houdini frame
 """
+
 from __future__ import annotations
 
 import html
 
 import hou
-from .qt import QtCore, QtGui, QtWidgets, event_pos, run_exec
 
 from . import bridge
-from .model import MIN_FRAMES, TRACKS, TRACK_LABELS, Timeline
+from .model import MIN_FRAMES, TRACK_LABELS, TRACKS, Timeline
+from .qt import QtCore, QtGui, QtWidgets, event_pos, run_exec
 
-# -- layout constants (pixels) --------------------------------------------------
-GUTTER = 78          # track labels
+###### Layout constants (pixels)
+GUTTER = 78  # track labels
 RULER_H = 22
 PROMPT_H = 46
 TRACK_H = 20
 PAD_R = 12
-EDGE_GRAB = 6        # px from a segment's right edge that counts as "resize"
-STATUS_W = 320       # status text is elided to this; errors can be arbitrarily long
-KEY_R = 6            # key marker half-size
-MIN_PPF, MAX_PPF = 0.25, 240.0   # zoom limits, pixels per frame
-FIT_MARGIN = 0.15                # fit leaves this much of the total free on the right
+EDGE_GRAB = 6  # px from a segment's right edge that counts as "resize"
+STATUS_W = 320  # status text is elided to this; errors can be arbitrarily long
+KEY_R = 6  # key marker half-size
+MIN_PPF, MAX_PPF = 0.25, 240.0  # zoom limits, pixels per frame
+FIT_MARGIN = 0.15  # fit leaves this much of the total free on the right
 
-SEG_COLORS = [QtGui.QColor(c) for c in ("#3b7dd8", "#d65a5a", "#3faa6d", "#d9a13a", "#8a5fd3", "#2fa9b8")]
+SEG_COLORS = [
+    QtGui.QColor(c)
+    for c in ("#3b7dd8", "#d65a5a", "#3faa6d", "#d9a13a", "#8a5fd3", "#2fa9b8")
+]
 TRACK_COLORS = {
-    "fullbody": QtGui.QColor("#f2c14e"), "LeftHand": QtGui.QColor("#6fb1ff"),
-    "RightHand": QtGui.QColor("#ff8a65"), "LeftFoot": QtGui.QColor("#7ed491"),
+    "fullbody": QtGui.QColor("#f2c14e"),
+    "LeftHand": QtGui.QColor("#6fb1ff"),
+    "RightHand": QtGui.QColor("#ff8a65"),
+    "LeftFoot": QtGui.QColor("#7ed491"),
     "RightFoot": QtGui.QColor("#d98cf0"),
 }
+
+
 def later(fn, _poll_ms=16):
     """Run fn from the event loop, and only once no mouse button is held.
 
@@ -53,11 +61,15 @@ def later(fn, _poll_ms=16):
     came up. See Canvas.mousePressEvent. Nine attempts blamed the menu and the dialog on
     the way, which is what theorising instead of tracing the events buys you.
     """
+
     def go():
         if QtWidgets.QApplication.mouseButtons() != QtCore.Qt.NoButton:
-            QtCore.QTimer.singleShot(_poll_ms, go)     # still held, wait for the release
+            QtCore.QTimer.singleShot(
+                _poll_ms, go
+            )  # still held, wait for the release
             return
         fn()
+
     QtCore.QTimer.singleShot(0, go)
 
 
@@ -70,9 +82,15 @@ def text_on(bg):
     return QtGui.QColor(255, 255, 255), QtGui.QColor(255, 255, 255, 200)
 
 
-BG = QtGui.QColor("#2b2b2b"); ROW_BG = QtGui.QColor("#333333"); GRID = QtGui.QColor("#454545")
-TEXT = QtGui.QColor("#e6e6e6"); DIM = QtGui.QColor("#9a9a9a"); PLAYHEAD = QtGui.QColor("#ff5252"); HIPMARK = QtGui.QColor("#6f7a8a")
-WHITE = QtGui.QColor("#ffffff"); OUTSIDE = QtGui.QColor(0, 0, 0, 60)
+BG = QtGui.QColor("#2b2b2b")
+ROW_BG = QtGui.QColor("#333333")
+GRID = QtGui.QColor("#454545")
+TEXT = QtGui.QColor("#e6e6e6")
+DIM = QtGui.QColor("#9a9a9a")
+PLAYHEAD = QtGui.QColor("#ff5252")
+HIPMARK = QtGui.QColor("#6f7a8a")
+WHITE = QtGui.QColor("#ffffff")
+OUTSIDE = QtGui.QColor(0, 0, 0, 60)
 
 
 class PromptDialog(QtWidgets.QDialog):
@@ -84,7 +102,9 @@ class PromptDialog(QtWidgets.QDialog):
         self.resize(480, 200)
         lay = QtWidgets.QVBoxLayout(self)
         self.edit = QtWidgets.QPlainTextEdit(text)
-        self.edit.setPlaceholderText("What the character does, in English\u2026")
+        self.edit.setPlaceholderText(
+            "What the character does, in English\u2026"
+        )
         lay.addWidget(self.edit)
 
         row = QtWidgets.QHBoxLayout()
@@ -98,17 +118,23 @@ class PromptDialog(QtWidgets.QDialog):
         row.addSpacing(16)
         row.addWidget(QtWidgets.QLabel("Seconds"))
         self.secs_box = QtWidgets.QDoubleSpinBox()
-        self.secs_box.setDecimals(2); self.secs_box.setSingleStep(0.25)
+        self.secs_box.setDecimals(2)
+        self.secs_box.setSingleStep(0.25)
         self.secs_box.setRange(MIN_FRAMES / max(bridge.fps(), 1.0), 100000.0)
-        self.secs_box.setToolTip("The same length in seconds, at the scene FPS.")
+        self.secs_box.setToolTip(
+            "The same length in seconds, at the scene FPS."
+        )
         self.secs_box.valueChanged.connect(self._secs_changed)
         row.addWidget(self.secs_box)
         row.addStretch(1)
         lay.addLayout(row)
         self._frames_changed(self.frames_box.value())
 
-        btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
-        btns.accepted.connect(self.accept); btns.rejected.connect(self.reject)
+        btns = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
         lay.addWidget(btns)
         self.edit.setFocus()
 
@@ -132,30 +158,35 @@ class PromptDialog(QtWidgets.QDialog):
 class Canvas(QtWidgets.QWidget):
     """Ruler + prompt row + one row per track. Emits `edited` after a model change that
     should be written to the node, `frameRequested` when the ruler is scrubbed."""
-    edited = QtCore.Signal(str)          # undo label
+
+    edited = QtCore.Signal(str)  # undo label
     frameRequested = QtCore.Signal(int)
-    regenRequested = QtCore.Signal(int, bool)   # segment index, and whether to run to the end
+    regenRequested = QtCore.Signal(
+        int, bool
+    )  # segment index, and whether to run to the end
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.tl = Timeline()
         self.start = 1
         self.playhead = 1
-        self.hip_range = (1, 1)   # Houdini's playbar range, drawn as bounds
+        self.hip_range = (1, 1)  # Houdini's playbar range, drawn as bounds
         # view state: frame at the left edge of the work zone and pixels per frame
         self._view_start = 0.0
         self._ppf = 10.0
         self._fitted = False
         # interaction state
-        self._mode = None                 # None | "resize" | "move" | "key" | "scrub" | "pan"
-        self._hover = -1                  # segment under the cursor, -1 for none
-        self._base_tip = None             # the controls hint, restored when not over a segment
-        self._idx = -1                    # segment index being edited
-        self._track = None                # track name for key drags
-        self._key = None                  # current key frame for key drags
-        self._drop = None                 # drop index while moving a segment
+        self._mode = None  # None | "resize" | "move" | "key" | "scrub" | "pan"
+        self._hover = -1  # segment under the cursor, -1 for none
+        self._base_tip = (
+            None  # the controls hint, restored when not over a segment
+        )
+        self._idx = -1  # segment index being edited
+        self._track = None  # track name for key drags
+        self._key = None  # current key frame for key drags
+        self._drop = None  # drop index while moving a segment
         self._pan_x = 0.0
-        self._menu = None                 # the open context menu, kept alive
+        self._menu = None  # the open context menu, kept alive
         self.setMouseTracking(True)
         # Nothing above us is allowed to see our mouse events. This panel is a Python
         # Panel, so "above us" is Houdini's own pane widget, and a press that reaches it
@@ -166,7 +197,7 @@ class Canvas(QtWidgets.QWidget):
         self.setMinimumHeight(RULER_H + PROMPT_H + TRACK_H * len(TRACKS) + 8)
         self.setContextMenuPolicy(QtCore.Qt.DefaultContextMenu)
 
-    # -- view -----------------------------------------------------------------
+    ###### View
     def _work_w(self) -> float:
         return max(1.0, self.width() - GUTTER - PAD_R)
 
@@ -213,7 +244,7 @@ class Canvas(QtWidgets.QWidget):
         else:
             super().keyPressEvent(ev)
 
-    # -- geometry helpers -----------------------------------------------------
+    ###### Geometry helpers
     def _row_of(self, y: float):
         if y < RULER_H:
             return "ruler", None
@@ -246,7 +277,7 @@ class Canvas(QtWidgets.QWidget):
                 return k
         return None
 
-    # -- painting -------------------------------------------------------------
+    ###### Painting
     def paintEvent(self, ev):
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing)
@@ -255,43 +286,85 @@ class Canvas(QtWidgets.QWidget):
         work = QtCore.QRectF(GUTTER, 0, w - GUTTER - PAD_R, h)
 
         # row backgrounds + labels (labels outside the clip so they never scroll)
-        p.fillRect(QtCore.QRectF(GUTTER, RULER_H, work.width(), PROMPT_H), ROW_BG)
+        p.fillRect(
+            QtCore.QRectF(GUTTER, RULER_H, work.width(), PROMPT_H), ROW_BG
+        )
         for i, t in enumerate(TRACKS):
             y = RULER_H + PROMPT_H + i * TRACK_H
-            p.fillRect(QtCore.QRectF(GUTTER, y, work.width(), TRACK_H), ROW_BG if i % 2 else BG)
+            p.fillRect(
+                QtCore.QRectF(GUTTER, y, work.width(), TRACK_H),
+                ROW_BG if i % 2 else BG,
+            )
             p.setPen(DIM)
-            p.drawText(QtCore.QRectF(4, y, GUTTER - 8, TRACK_H), QtCore.Qt.AlignVCenter | QtCore.Qt.AlignRight, TRACK_LABELS[t])
+            p.drawText(
+                QtCore.QRectF(4, y, GUTTER - 8, TRACK_H),
+                QtCore.Qt.AlignVCenter | QtCore.Qt.AlignRight,
+                TRACK_LABELS[t],
+            )
         p.setPen(DIM)
-        p.drawText(QtCore.QRectF(4, RULER_H, GUTTER - 8, PROMPT_H), QtCore.Qt.AlignVCenter | QtCore.Qt.AlignRight, "Prompts")
+        p.drawText(
+            QtCore.QRectF(4, RULER_H, GUTTER - 8, PROMPT_H),
+            QtCore.Qt.AlignVCenter | QtCore.Qt.AlignRight,
+            "Prompts",
+        )
 
         p.setClipRect(work)
 
         # outside-the-clip shading, both ends
         x_start = self.x_of(self.start)
         if x_start > GUTTER:
-            p.fillRect(QtCore.QRectF(GUTTER, RULER_H, x_start - GUTTER, h - RULER_H), OUTSIDE)
+            p.fillRect(
+                QtCore.QRectF(GUTTER, RULER_H, x_start - GUTTER, h - RULER_H),
+                OUTSIDE,
+            )
         x_end = self.x_of(self.start + self.tl.total_frames)
         if x_end < w - PAD_R:
-            p.fillRect(QtCore.QRectF(x_end, RULER_H, (w - PAD_R) - x_end, h - RULER_H), OUTSIDE)
+            p.fillRect(
+                QtCore.QRectF(x_end, RULER_H, (w - PAD_R) - x_end, h - RULER_H),
+                OUTSIDE,
+            )
 
         # ruler + grid: tick every N frames so labels stay >= 48 px apart
         step = 1200
-        for cand in (1, 2, 5, 10, 12, 24, 25, 30, 48, 50, 60, 100, 120, 240, 300, 600):
+        for cand in (
+            1,
+            2,
+            5,
+            10,
+            12,
+            24,
+            25,
+            30,
+            48,
+            50,
+            60,
+            100,
+            120,
+            240,
+            300,
+            600,
+        ):
             if cand * self._ppf >= 48:
-                step = cand; break
+                step = cand
+                break
         fm = p.fontMetrics()
         ph_x = self.x_of(self.playhead)
         ph_w = max(30.0, fm.horizontalAdvance(str(self.playhead)) + 14)
         ph_badge = QtCore.QRectF(ph_x - ph_w / 2, 2, ph_w, RULER_H - 6)
-        f0 = self.frame_at(GUTTER); f1 = self.frame_at(w - PAD_R)
+        f0 = self.frame_at(GUTTER)
+        f1 = self.frame_at(w - PAD_R)
         f = f0 - (f0 % step)
         while f <= f1:
             x = self.x_of(f)
-            p.setPen(GRID); p.drawLine(QtCore.QPointF(x, RULER_H), QtCore.QPointF(x, h))
+            p.setPen(GRID)
+            p.drawLine(QtCore.QPointF(x, RULER_H), QtCore.QPointF(x, h))
             lab = str(f)
             # a tick label peeking out from behind the playhead badge reads as a second number
-            if not QtCore.QRectF(x + 3, 0, fm.horizontalAdvance(lab), RULER_H).intersects(ph_badge):
-                p.setPen(TEXT); p.drawText(QtCore.QPointF(x + 3, RULER_H - 7), lab)
+            if not QtCore.QRectF(
+                x + 3, 0, fm.horizontalAdvance(lab), RULER_H
+            ).intersects(ph_badge):
+                p.setPen(TEXT)
+                p.drawText(QtCore.QPointF(x + 3, RULER_H - 7), lab)
             f += step
 
         # HIP playbar bounds, so the scene range is readable against the clip
@@ -301,7 +374,10 @@ class Canvas(QtWidgets.QWidget):
                 p.setPen(QtGui.QPen(HIPMARK, 1, QtCore.Qt.DashLine))
                 p.drawLine(QtCore.QPointF(hx, RULER_H), QtCore.QPointF(hx, h))
         p.setPen(QtGui.QPen(QtGui.QColor(90, 90, 90), 1))
-        p.drawLine(QtCore.QPointF(GUTTER, RULER_H - 0.5), QtCore.QPointF(w - PAD_R, RULER_H - 0.5))
+        p.drawLine(
+            QtCore.QPointF(GUTTER, RULER_H - 0.5),
+            QtCore.QPointF(w - PAD_R, RULER_H - 0.5),
+        )
 
         # segments
         fps = bridge.fps()
@@ -309,42 +385,84 @@ class Canvas(QtWidgets.QWidget):
         for i, r in enumerate(rects):
             col = SEG_COLORS[i % len(SEG_COLORS)]
             if self._mode == "move" and i == self._idx:
-                col = QtGui.QColor(col); col.setAlpha(110)
+                col = QtGui.QColor(col)
+                col.setAlpha(110)
             elif i == self._hover and self._mode is None:
                 col = col.lighter(122)
             fg, fg_dim = text_on(col)
             rr = r.adjusted(1, 0, -1, 0)
-            p.setPen(QtCore.Qt.NoPen); p.setBrush(col)
+            p.setPen(QtCore.Qt.NoPen)
+            p.setBrush(col)
             p.drawRoundedRect(rr, 5, 5)
             # edge colour follows the contrast rule, so it stays visible on light blocks
-            edge = QtGui.QColor(fg); edge.setAlpha(55)
-            p.setPen(QtGui.QPen(edge, 1)); p.setBrush(QtCore.Qt.NoBrush)
+            edge = QtGui.QColor(fg)
+            edge.setAlpha(55)
+            p.setPen(QtGui.QPen(edge, 1))
+            p.setBrush(QtCore.Qt.NoBrush)
             p.drawRoundedRect(rr.adjusted(0.5, 0.5, -0.5, -0.5), 5, 5)
             seg = self.tl.segments[i]
             secs = seg.frames / fps
-            txt = QtCore.QRectF(r.left() + 6, r.top() + 2, max(0, r.width() - 12), r.height() - 4)
+            txt = QtCore.QRectF(
+                r.left() + 6,
+                r.top() + 2,
+                max(0, r.width() - 12),
+                r.height() - 4,
+            )
             if txt.width() > 24:
                 p.setPen(fg)
-                p.drawText(txt, QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop | QtCore.Qt.TextSingleLine,
-                           fm.elidedText(seg.prompt or "(empty prompt)", QtCore.Qt.ElideRight, int(txt.width())))
+                p.drawText(
+                    txt,
+                    QtCore.Qt.AlignLeft
+                    | QtCore.Qt.AlignTop
+                    | QtCore.Qt.TextSingleLine,
+                    fm.elidedText(
+                        seg.prompt or "(empty prompt)",
+                        QtCore.Qt.ElideRight,
+                        int(txt.width()),
+                    ),
+                )
                 p.setPen(fg_dim)
-                p.drawText(txt, QtCore.Qt.AlignLeft | QtCore.Qt.AlignBottom, f"{seg.frames} f \u00b7 {secs:.2f} s")
+                p.drawText(
+                    txt,
+                    QtCore.Qt.AlignLeft | QtCore.Qt.AlignBottom,
+                    f"{seg.frames} f \u00b7 {secs:.2f} s",
+                )
             p.setPen(QtGui.QPen(fg, 2))
             gx = r.right() - 3
-            p.drawLine(QtCore.QPointF(gx, r.top() + 8), QtCore.QPointF(gx, r.bottom() - 8))
+            p.drawLine(
+                QtCore.QPointF(gx, r.top() + 8),
+                QtCore.QPointF(gx, r.bottom() - 8),
+            )
         if not rects:
             p.setPen(DIM)
-            p.drawText(QtCore.QRectF(GUTTER, RULER_H, work.width(), PROMPT_H), QtCore.Qt.AlignCenter,
-                       "Right-click to add a prompt segment")
+            p.drawText(
+                QtCore.QRectF(GUTTER, RULER_H, work.width(), PROMPT_H),
+                QtCore.Qt.AlignCenter,
+                "Right-click to add a prompt segment",
+            )
         if self.tl.transition_frames and len(rects) > 1:
-            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 90), 1, QtCore.Qt.DashLine))
+            p.setPen(
+                QtGui.QPen(
+                    QtGui.QColor(255, 255, 255, 90), 1, QtCore.Qt.DashLine
+                )
+            )
             for r in rects[1:]:
-                p.drawLine(QtCore.QPointF(r.left(), RULER_H), QtCore.QPointF(r.left(), RULER_H + PROMPT_H))
+                p.drawLine(
+                    QtCore.QPointF(r.left(), RULER_H),
+                    QtCore.QPointF(r.left(), RULER_H + PROMPT_H),
+                )
         if self._mode == "move" and self._drop is not None:
             starts = self.tl.starts(self.start)
-            x = self.x_of(starts[self._drop]) if self._drop < len(starts) else self.x_of(self.start + self.tl.total_frames)
+            x = (
+                self.x_of(starts[self._drop])
+                if self._drop < len(starts)
+                else self.x_of(self.start + self.tl.total_frames)
+            )
             p.setPen(QtGui.QPen(WHITE, 3))
-            p.drawLine(QtCore.QPointF(x, RULER_H + 2), QtCore.QPointF(x, RULER_H + PROMPT_H - 2))
+            p.drawLine(
+                QtCore.QPointF(x, RULER_H + 2),
+                QtCore.QPointF(x, RULER_H + PROMPT_H - 2),
+            )
 
         # keys (and a hint on empty tracks)
         for t in TRACKS:
@@ -352,30 +470,48 @@ class Canvas(QtWidgets.QWidget):
             col = TRACK_COLORS[t]
             if not self.tl.tracks.get(t) and t == TRACKS[0]:
                 p.setPen(QtGui.QColor(120, 120, 120))
-                p.drawText(QtCore.QPointF(GUTTER + 8, y + 4), "double-click or right-click a track to add a pose key")
+                p.drawText(
+                    QtCore.QPointF(GUTTER + 8, y + 4),
+                    "double-click or right-click a track to add a pose key",
+                )
             for k in self.tl.tracks.get(t, []):
                 x = self.x_of(k)
                 path = QtGui.QPainterPath()
-                path.moveTo(x, y - KEY_R); path.lineTo(x + KEY_R, y); path.lineTo(x, y + KEY_R); path.lineTo(x - KEY_R, y); path.closeSubpath()
-                p.setPen(QtGui.QPen(QtGui.QColor("#111111"), 1)); p.setBrush(col); p.drawPath(path)
+                path.moveTo(x, y - KEY_R)
+                path.lineTo(x + KEY_R, y)
+                path.lineTo(x, y + KEY_R)
+                path.lineTo(x - KEY_R, y)
+                path.closeSubpath()
+                p.setPen(QtGui.QPen(QtGui.QColor("#111111"), 1))
+                p.setBrush(col)
+                p.drawPath(path)
 
         # playhead. Blocks and shading treat a frame as the cell [f, f+1), so the current
         # frame is filled across its whole cell; the line alone marked only its left edge,
         # which made the end-of-clip shading look a frame late.
         x = self.x_of(self.playhead)
         x_next = self.x_of(self.playhead + 1)
-        p.fillRect(QtCore.QRectF(x, RULER_H, x_next - x, h - RULER_H), QtGui.QColor(255, 82, 82, 38))
-        p.setPen(QtGui.QPen(PLAYHEAD, 2)); p.drawLine(QtCore.QPointF(x, 0), QtCore.QPointF(x, h))
-        p.setBrush(PLAYHEAD); p.setPen(QtCore.Qt.NoPen)
+        p.fillRect(
+            QtCore.QRectF(x, RULER_H, x_next - x, h - RULER_H),
+            QtGui.QColor(255, 82, 82, 38),
+        )
+        p.setPen(QtGui.QPen(PLAYHEAD, 2))
+        p.drawLine(QtCore.QPointF(x, 0), QtCore.QPointF(x, h))
+        p.setBrush(PLAYHEAD)
+        p.setPen(QtCore.Qt.NoPen)
         p.drawRoundedRect(ph_badge, 3, 3)
-        p.setPen(WHITE); p.drawText(ph_badge, QtCore.Qt.AlignCenter, str(self.playhead))
+        p.setPen(WHITE)
+        p.drawText(ph_badge, QtCore.Qt.AlignCenter, str(self.playhead))
         p.end()
 
-    # -- mouse ----------------------------------------------------------------
+    ###### Mouse
     def mousePressEvent(self, ev):
         pos = event_pos(ev)
         if ev.button() == QtCore.Qt.MiddleButton:
-            self._mode = "pan"; self._pan_x = pos.x(); self.setCursor(QtCore.Qt.ClosedHandCursor); return
+            self._mode = "pan"
+            self._pan_x = pos.x()
+            self.setCursor(QtCore.Qt.ClosedHandCursor)
+            return
         if ev.button() != QtCore.Qt.LeftButton:
             # Consume it. THIS is the input wedge, and it has nothing to do with menus.
             # QWidget.mousePressEvent's default implementation ignores the event, and an
@@ -390,12 +526,16 @@ class Canvas(QtWidgets.QWidget):
             return
         row, track = self._row_of(pos.y())
         if row == "ruler":
-            self._mode = "scrub"; self._scrub_to(pos.x()); return
+            self._mode = "scrub"
+            self._scrub_to(pos.x())
+            return
         if row == "prompt":
             i, r = self._seg_at(pos)
             if i >= 0:
                 self._idx = i
-                self._mode = "resize" if pos.x() >= r.right() - EDGE_GRAB - 2 else "move"
+                self._mode = (
+                    "resize" if pos.x() >= r.right() - EDGE_GRAB - 2 else "move"
+                )
                 self._drop = i
                 self.update()
             return
@@ -407,25 +547,39 @@ class Canvas(QtWidgets.QWidget):
     def mouseMoveEvent(self, ev):
         pos = event_pos(ev)
         if self._mode == "pan":
-            self.pan(pos.x() - self._pan_x); self._pan_x = pos.x(); return
+            self.pan(pos.x() - self._pan_x)
+            self._pan_x = pos.x()
+            return
         if self._mode == "scrub":
-            self._scrub_to(pos.x()); return
+            self._scrub_to(pos.x())
+            return
         if self._mode == "resize":
             st = self.tl.starts(self.start)[self._idx]
             self.tl.resize(self._idx, self.frame_at(pos.x()) - st)
-            self.update(); return
+            self.update()
+            return
         if self._mode == "move":
             f = self.frame_at(pos.x())
             starts = self.tl.starts(self.start)
             drop = len(starts)
             for i, st in enumerate(starts):
                 if f < st + self.tl.segments[i].frames / 2:
-                    drop = i; break
-            self._drop = drop; self.update(); return
+                    drop = i
+                    break
+            self._drop = drop
+            self.update()
+            return
         if self._mode == "key":
-            new = max(self.start, min(self.frame_at(pos.x()), self.start + self.tl.total_frames - 1))
+            new = max(
+                self.start,
+                min(
+                    self.frame_at(pos.x()),
+                    self.start + self.tl.total_frames - 1,
+                ),
+            )
             self._key = self.tl.move_key(self._track, self._key, new)
-            self.update(); return
+            self.update()
+            return
         # hover: cursor, block highlight, and the full prompt in a tooltip
         row, track = self._row_of(pos.y())
         cur = QtCore.Qt.ArrowCursor
@@ -434,7 +588,11 @@ class Canvas(QtWidgets.QWidget):
             i, r = self._seg_at(pos)
             if i >= 0:
                 hover = i
-                cur = QtCore.Qt.SizeHorCursor if pos.x() >= r.right() - EDGE_GRAB - 2 else QtCore.Qt.OpenHandCursor
+                cur = (
+                    QtCore.Qt.SizeHorCursor
+                    if pos.x() >= r.right() - EDGE_GRAB - 2
+                    else QtCore.Qt.OpenHandCursor
+                )
         elif row == "track" and self._key_at(track, pos.x()) is not None:
             cur = QtCore.Qt.SizeHorCursor
         self.setCursor(cur)
@@ -461,23 +619,27 @@ class Canvas(QtWidgets.QWidget):
         seg = self.tl.segments[i]
         st = self.tl.starts(self.start)[i]
         safe = html.escape(seg.prompt or "(empty prompt)")
-        return (f"<b>Segment {i + 1} of {len(self.tl.segments)}</b>"
-                f"<br>frames {st}-{st + seg.frames - 1}"
-                f" &nbsp;({seg.frames} f, {seg.frames / bridge.fps():.2f} s)"
-                f"<br><br>{safe}")
+        return (
+            f"<b>Segment {i + 1} of {len(self.tl.segments)}</b>"
+            f"<br>frames {st}-{st + seg.frames - 1}"
+            f" &nbsp;({seg.frames} f, {seg.frames / bridge.fps():.2f} s)"
+            f"<br><br>{safe}"
+        )
 
     def mouseReleaseEvent(self, ev):
         mode, self._mode = self._mode, None
         if mode == "pan":
             self.setCursor(QtCore.Qt.ArrowCursor)
         elif mode == "resize":
-            self.tl.clamp_keys(self.start); self._commit("resize segment")
+            self.tl.clamp_keys(self.start)
+            self._commit("resize segment")
         elif mode == "move":
             drop = self._drop if self._drop is not None else self._idx
             if drop > self._idx:
-                drop -= 1                    # removing src shifts later indices left
+                drop -= 1  # removing src shifts later indices left
             if drop != self._idx:
-                self.tl.move(self._idx, drop); self._commit("reorder segments")
+                self.tl.move(self._idx, drop)
+                self._commit("reorder segments")
             self._drop = None
         elif mode == "key":
             self._commit("move key")
@@ -522,13 +684,19 @@ class Canvas(QtWidgets.QWidget):
         pos = QtCore.QPointF(ev.pos())
         row, track = self._row_of(pos.y())
         menu = hou.qt.Menu()
-        do = {}                     # QAction -> what to run once the menu has closed
+        do = {}  # QAction -> what to run once the menu has closed
         if row == "prompt":
             i, _ = self._seg_at(pos)
             if i >= 0:
-                do[menu.addAction("Edit segment\u2026")] = lambda: self.edit_prompt(i)
-                do[menu.addAction("Add segment after")] = lambda: self.add_segment(after=i)
-                do[menu.addAction("Split at playhead")] = lambda: self.split_at(i, self.playhead)
+                do[menu.addAction("Edit segment\u2026")] = lambda: (
+                    self.edit_prompt(i)
+                )
+                do[menu.addAction("Add segment after")] = lambda: (
+                    self.add_segment(after=i)
+                )
+                do[menu.addAction("Split at playhead")] = lambda: self.split_at(
+                    i, self.playhead
+                )
                 menu.addSeparator()
                 one = menu.addAction("Regenerate this segment\u2026")
                 rest = menu.addAction("Regenerate from here to the end\u2026")
@@ -537,24 +705,37 @@ class Canvas(QtWidgets.QWidget):
                 for act in (one, rest):
                     act.setEnabled(i > 0)
                     if i == 0:
-                        act.setToolTip("The first segment has no earlier motion to "
-                                       "continue from; use Generate.")
+                        act.setToolTip(
+                            "The first segment has no earlier motion to "
+                            "continue from; use Generate."
+                        )
                 menu.addSeparator()
-                do[menu.addAction("Delete segment")] = lambda: self.remove_segment(i)
+                do[menu.addAction("Delete segment")] = lambda: (
+                    self.remove_segment(i)
+                )
             else:
                 do[menu.addAction("Add segment at end")] = self.add_segment
         elif row == "track":
             f = self.frame_at(pos.x())
             k = self._key_at(track, pos.x())
             if k is not None:
-                do[menu.addAction(f"Delete key at {k}")] = lambda: self.remove_key(track, k)
+                do[menu.addAction(f"Delete key at {k}")] = lambda: (
+                    self.remove_key(track, k)
+                )
             else:
-                do[menu.addAction(f"Add {TRACK_LABELS[track]} key at {f}")] = lambda: self.add_key(track, f)
-            do[menu.addAction(f"Add {TRACK_LABELS[track]} key at playhead ({self.playhead})")] = \
-                lambda: self.add_key(track, self.playhead)
+                do[menu.addAction(f"Add {TRACK_LABELS[track]} key at {f}")] = (
+                    lambda: self.add_key(track, f)
+                )
+            do[
+                menu.addAction(
+                    f"Add {TRACK_LABELS[track]} key at playhead ({self.playhead})"
+                )
+            ] = lambda: self.add_key(track, self.playhead)
             if self.tl.tracks.get(track):
                 menu.addSeparator()
-                do[menu.addAction("Clear track")] = lambda: self.clear_track(track)
+                do[menu.addAction("Clear track")] = lambda: self.clear_track(
+                    track
+                )
         else:
             return
         menu.addSeparator()
@@ -562,7 +743,7 @@ class Canvas(QtWidgets.QWidget):
         self._menu = menu
         chosen = do.get(run_exec(menu, ev.globalPos()))
         if chosen is not None:
-            later(chosen)           # and off the stack of this handler too
+            later(chosen)  # and off the stack of this handler too
 
     def _scrub_to(self, x):
         """Move our own playhead and repaint straight away, then ask Houdini to follow.
@@ -573,7 +754,7 @@ class Canvas(QtWidgets.QWidget):
             self.update()
         self.frameRequested.emit(f)
 
-    # -- model edits (each ends in one undoable write) ------------------------
+    ###### Model edits (each ends in one undoable write)
     def _ask(self, prompt, frames, then):
         """Show the segment dialog and call `then(text, frames)` if it is accepted.
 
@@ -610,17 +791,26 @@ class Canvas(QtWidgets.QWidget):
                 return
             self.tl.set_prompt(i, text)
             if frames != seg.frames:
-                self.tl.resize(i, frames); self.tl.clamp_keys(self.start)
+                self.tl.resize(i, frames)
+                self.tl.clamp_keys(self.start)
             self._commit("edit segment")
 
         self._ask(seg.prompt, seg.frames, apply)
 
     def add_segment(self, after=None):
-        default = self.tl.segments[after].frames if after is not None and self.tl.segments else int(round(3 * bridge.fps()))
+        default = (
+            self.tl.segments[after].frames
+            if after is not None and self.tl.segments
+            else int(round(3 * bridge.fps()))
+        )
 
         def apply(text, frames):
             # same as edit_prompt: the timeline can have moved on while the dialog was up
-            at = after if after is not None and after < len(self.tl.segments) else None
+            at = (
+                after
+                if after is not None and after < len(self.tl.segments)
+                else None
+            )
             self.tl.add(text, frames, after=at)
             self._commit("add segment")
 
@@ -632,11 +822,13 @@ class Canvas(QtWidgets.QWidget):
         seg = self.tl.segments[i]
         if 0 < left < seg.frames:
             right = seg.frames - left
-            self.tl.resize(i, left); self.tl.add(seg.prompt, right, after=i)
+            self.tl.resize(i, left)
+            self.tl.add(seg.prompt, right, after=i)
             self._commit("split segment")
 
     def remove_segment(self, i):
-        self.tl.remove(i); self.tl.clamp_keys(self.start)
+        self.tl.remove(i)
+        self.tl.clamp_keys(self.start)
         self._commit("delete segment")
 
     def add_key(self, track, frame):
@@ -645,10 +837,12 @@ class Canvas(QtWidgets.QWidget):
         self._commit("add key")
 
     def remove_key(self, track, frame):
-        self.tl.remove_key(track, frame); self._commit("delete key")
+        self.tl.remove_key(track, frame)
+        self._commit("delete key")
 
     def clear_track(self, track):
-        self.tl.tracks[track] = []; self._commit("clear track")
+        self.tl.tracks[track] = []
+        self._commit("clear track")
 
 
 class TimelineWidget(QtWidgets.QWidget):
@@ -662,23 +856,29 @@ class TimelineWidget(QtWidgets.QWidget):
         self._status_text = None
 
         lay = QtWidgets.QVBoxLayout(self)
-        lay.setContentsMargins(6, 6, 6, 6); lay.setSpacing(6)
+        lay.setContentsMargins(6, 6, 6, 6)
+        lay.setSpacing(6)
 
         head = QtWidgets.QHBoxLayout()
         self.node_combo = QtWidgets.QComboBox()
         self.node_combo.setMinimumWidth(240)
-        self.node_combo.setToolTip("Kimodo Motion nodes in this scene. Pick one to edit its timeline; "
-                                   "selecting a node in the network editor also switches here.")
+        self.node_combo.setToolTip(
+            "Kimodo Motion nodes in this scene. Pick one to edit its timeline; "
+            "selecting a node in the network editor also switches here."
+        )
         self.node_combo.activated.connect(self._combo_picked)
         head.addWidget(self.node_combo)
         self.warn_label = QtWidgets.QLabel("")
         self.warn_label.setStyleSheet("font-weight: bold; color: #e0a030")
-        head.addWidget(self.warn_label); head.addStretch(1)
+        head.addWidget(self.warn_label)
+        head.addStretch(1)
         lay.addLayout(head)
 
         self.canvas = Canvas(self)
-        self.canvas.setToolTip("Wheel: zoom \u00b7 Middle-drag: pan \u00b7 F: fit \u00b7 Drag block edge: resize \u00b7 Drag block: reorder \u00b7 "
-                               "Double-click: edit prompt + length \u00b7 Right-click: add / split / delete")
+        self.canvas.setToolTip(
+            "Wheel: zoom \u00b7 Middle-drag: pan \u00b7 F: fit \u00b7 Drag block edge: resize \u00b7 Drag block: reorder \u00b7 "
+            "Double-click: edit prompt + length \u00b7 Right-click: add / split / delete"
+        )
         self.canvas.edited.connect(self._write)
         # Queued, not direct. Run synchronously, both of these re-enter Houdini from
         # inside a Qt event handler: set_frame calls hou.ui.triggerUpdate from
@@ -690,22 +890,34 @@ class TimelineWidget(QtWidgets.QWidget):
         # connection runs the slot from the event loop once the handler has returned.
         # Scrubbing still reads as immediate because _scrub_to moves the canvas's own
         # playhead before it emits.
-        self.canvas.frameRequested.connect(bridge.set_frame, QtCore.Qt.QueuedConnection)
-        self.canvas.regenRequested.connect(self._regen, QtCore.Qt.QueuedConnection)
+        self.canvas.frameRequested.connect(
+            bridge.set_frame, QtCore.Qt.QueuedConnection
+        )
+        self.canvas.regenRequested.connect(
+            self._regen, QtCore.Qt.QueuedConnection
+        )
         lay.addWidget(self.canvas, 1)
 
         foot = QtWidgets.QHBoxLayout()
         foot.addWidget(QtWidgets.QLabel("Transition"))
-        self.transition = QtWidgets.QSpinBox(); self.transition.setRange(1, 60); self.transition.setSuffix(" samples")
-        self.transition.setToolTip("Kimodo blends consecutive segments over this many clip samples (30 fps) at each boundary.")
+        self.transition = QtWidgets.QSpinBox()
+        self.transition.setRange(1, 60)
+        self.transition.setSuffix(" samples")
+        self.transition.setToolTip(
+            "Kimodo blends consecutive segments over this many clip samples (30 fps) at each boundary."
+        )
         self.transition.valueChanged.connect(self._transition_changed)
-        self.transition.editingFinished.connect(lambda: self._write("Kimodo timeline: transition"))
+        self.transition.editingFinished.connect(
+            lambda: self._write("Kimodo timeline: transition")
+        )
         foot.addWidget(self.transition)
         foot.addSpacing(16)
         self.total_label = QtWidgets.QLabel("")
         self.total_label.setTextFormat(QtCore.Qt.RichText)
-        self.total_label.setToolTip("First and last scene frame this timeline occupies, "
-                                    "from the node's Start Frame.")
+        self.total_label.setToolTip(
+            "First and last scene frame this timeline occupies, "
+            "from the node's Start Frame."
+        )
         foot.addWidget(self.total_label)
         foot.addStretch(1)
         self.key_track = QtWidgets.QComboBox()
@@ -714,17 +926,28 @@ class TimelineWidget(QtWidgets.QWidget):
         self.key_track.setToolTip("Track for Add Key")
         foot.addWidget(self.key_track)
         self.key_btn = QtWidgets.QPushButton("Add Key at Playhead")
-        self.key_btn.setToolTip("Add a pose key on the chosen track at the current Houdini frame. "
-                                "Also: double-click a track row, or right-click it.")
-        self.key_btn.clicked.connect(lambda: self.canvas.add_key(self.key_track.currentData(), self.canvas.playhead))
+        self.key_btn.setToolTip(
+            "Add a pose key on the chosen track at the current Houdini frame. "
+            "Also: double-click a track row, or right-click it."
+        )
+        self.key_btn.clicked.connect(
+            lambda: self.canvas.add_key(
+                self.key_track.currentData(), self.canvas.playhead
+            )
+        )
         foot.addWidget(self.key_btn)
         foot.addSpacing(12)
-        self.fit_btn = QtWidgets.QPushButton("Fit"); self.fit_btn.setToolTip("Show the whole timeline (F)")
+        self.fit_btn = QtWidgets.QPushButton("Fit")
+        self.fit_btn.setToolTip("Show the whole timeline (F)")
         self.fit_btn.clicked.connect(self.canvas.fit)
         foot.addWidget(self.fit_btn)
         foot.addSpacing(12)
-        self.progress = QtWidgets.QProgressBar(); self.progress.setRange(0, 1000); self.progress.setTextVisible(True)
-        self.progress.setFixedWidth(160); self.progress.setFormat("%p%"); self.progress.hide()
+        self.progress = QtWidgets.QProgressBar()
+        self.progress.setRange(0, 1000)
+        self.progress.setTextVisible(True)
+        self.progress.setFixedWidth(160)
+        self.progress.setFormat("%p%")
+        self.progress.hide()
         foot.addWidget(self.progress)
         self.status_label = QtWidgets.QLabel("")
         self.status_label.setStyleSheet("color: #9a9a9a")
@@ -733,41 +956,55 @@ class TimelineWidget(QtWidgets.QWidget):
         # cap it, let it shrink below its hint, and keep the full text in the tooltip.
         self.status_label.setMaximumWidth(STATUS_W)
         self.status_label.setMinimumWidth(0)
-        self.status_label.setSizePolicy(QtWidgets.QSizePolicy.Ignored,
-                                        QtWidgets.QSizePolicy.Preferred)
-        self.status_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        self.status_label.setSizePolicy(
+            QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred
+        )
+        self.status_label.setTextInteractionFlags(
+            QtCore.Qt.TextSelectableByMouse
+        )
         foot.addWidget(self.status_label)
         self.cancel_btn = QtWidgets.QPushButton("Cancel")
-        self.cancel_btn.clicked.connect(lambda: later(lambda: self.node and bridge.cancel(self.node)))
+        self.cancel_btn.clicked.connect(
+            lambda: later(lambda: self.node and bridge.cancel(self.node))
+        )
         foot.addWidget(self.cancel_btn)
-        self.gen_btn = QtWidgets.QPushButton("Generate"); self.gen_btn.setDefault(True)
+        self.gen_btn = QtWidgets.QPushButton("Generate")
+        self.gen_btn.setDefault(True)
         # No stylesheet here: any stylesheet on a QPushButton hands rendering to
         # QStyleSheetStyle, which draws the CSS box model and drops Houdini's native
         # button background. Get bold and width the native way so the chrome survives.
-        _f = self.gen_btn.font(); _f.setBold(True); self.gen_btn.setFont(_f)
+        _f = self.gen_btn.font()
+        _f.setBold(True)
+        self.gen_btn.setFont(_f)
         self.gen_btn.setMinimumWidth(110)
         self.gen_btn.clicked.connect(lambda: later(self._generate))
         foot.addWidget(self.gen_btn)
         lay.addLayout(foot)
 
-        self._timer = QtCore.QTimer(self); self._timer.setInterval(400)
-        self._timer.timeout.connect(self._tick); self._timer.start()
+        self._timer = QtCore.QTimer(self)
+        self._timer.setInterval(400)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start()
         # The 400 ms tick is too coarse to follow playback, and running the whole tick at
         # frame rate would be wasteful. A second timer moves only the playhead.
-        self._play_timer = QtCore.QTimer(self); self._play_timer.setInterval(33)
-        self._play_timer.timeout.connect(self._sync_playhead); self._play_timer.start()
+        self._play_timer = QtCore.QTimer(self)
+        self._play_timer.setInterval(33)
+        self._play_timer.timeout.connect(self._sync_playhead)
+        self._play_timer.start()
         self._tick()
 
     def _set_status(self, text):
         """Show `text` elided to STATUS_W, with the whole thing in the tooltip."""
         text = text or ""
         if text == self._status_text:
-            return                      # runs on the 400 ms tick; do not re-elide constantly
+            return  # runs on the 400 ms tick; do not re-elide constantly
         self._status_text = text
         self.status_label.setToolTip(text)
         fm = self.status_label.fontMetrics()
         width = min(self.status_label.width() or STATUS_W, STATUS_W)
-        self.status_label.setText(fm.elidedText(text, QtCore.Qt.ElideRight, width))
+        self.status_label.setText(
+            fm.elidedText(text, QtCore.Qt.ElideRight, width)
+        )
 
     def _sync_playhead(self):
         """Follow the Houdini frame at ~30 fps. One HOM call, repaint only on a change."""
@@ -781,11 +1018,13 @@ class TimelineWidget(QtWidgets.QWidget):
             self.canvas.playhead = f
             self.canvas.update()
 
-    # -- binding --------------------------------------------------------------
+    ###### Binding
     def _sync_combo(self):
         """Refresh the node list without disturbing the current pick."""
         paths = [n.path() for n in bridge.all_nodes()]
-        if paths == [self.node_combo.itemData(i) for i in range(self.node_combo.count())]:
+        if paths == [
+            self.node_combo.itemData(i) for i in range(self.node_combo.count())
+        ]:
             return
         self.node_combo.blockSignals(True)
         self.node_combo.clear()
@@ -795,11 +1034,13 @@ class TimelineWidget(QtWidgets.QWidget):
 
     def _combo_picked(self, index):
         node = bridge.node_at(self.node_combo.itemData(index))
-        if node is not None and (self.node is None or node.path() != self.node.path()):
+        if node is not None and (
+            self.node is None or node.path() != self.node.path()
+        ):
             self._load(node)
 
     def _tick(self):
-        if not self.isVisible():      # hidden pane tab: nothing to poll for
+        if not self.isVisible():  # hidden pane tab: nothing to poll for
             return
         try:
             self._sync_combo()
@@ -815,14 +1056,24 @@ class TimelineWidget(QtWidgets.QWidget):
                 if first is not None:
                     self._load(first)
             if self.node is not None:
-                self.node.path()              # raises if the node was deleted
+                self.node.path()  # raises if the node was deleted
                 raw = self.node.parm("timeline_json").eval()
-                if raw != self._last_json:    # external change (undo, manual parm edit)
+                if (
+                    raw != self._last_json
+                ):  # external change (undo, manual parm edit)
                     self._load(self.node, keep_view=True)
         except hou.ObjectWasDeleted:
             self.node = None
         enabled = self.node is not None
-        for w in (self.canvas, self.transition, self.gen_btn, self.cancel_btn, self.fit_btn, self.key_btn, self.key_track):
+        for w in (
+            self.canvas,
+            self.transition,
+            self.gen_btn,
+            self.cancel_btn,
+            self.fit_btn,
+            self.key_btn,
+            self.key_track,
+        ):
             w.setEnabled(enabled)
         if not enabled:
             # The node was deleted, or the scene was replaced. Disabling the widgets is
@@ -842,7 +1093,7 @@ class TimelineWidget(QtWidgets.QWidget):
         new_start = bridge.start_frame(self.node)
         new_hip = bridge.hip_frame_range()
         if new_start != self.canvas.start or new_hip != self.canvas.hip_range:
-            self.canvas.start = new_start       # Start Frame or the HIP range moved
+            self.canvas.start = new_start  # Start Frame or the HIP range moved
             self.canvas.hip_range = new_hip
             self._refresh_total()
             self.canvas.update()
@@ -861,14 +1112,18 @@ class TimelineWidget(QtWidgets.QWidget):
         has_keys = any(self.canvas.tl.tracks.values())
         self.warn_label.setText(
             "\u26a0 pose keys need a posed skeleton on input 1 (Create Pose Rig)"
-            if has_keys and self.node.input(1) is None else "")
+            if has_keys and self.node.input(1) is None
+            else ""
+        )
 
     def _load(self, node, keep_view=False):
         self.node = node
         self.canvas.tl = bridge.load(node)
         self.canvas.start = bridge.start_frame(node)
         self._last_json = node.parm("timeline_json").eval()
-        self.transition.blockSignals(True); self.transition.setValue(self.canvas.tl.transition_frames); self.transition.blockSignals(False)
+        self.transition.blockSignals(True)
+        self.transition.setValue(self.canvas.tl.transition_frames)
+        self.transition.blockSignals(False)
         self._refresh_total()
         if keep_view:
             self.canvas.update()
@@ -881,12 +1136,16 @@ class TimelineWidget(QtWidgets.QWidget):
         last = first + tl.total_frames - 1 if tl.total_frames else first
         h0, h1 = self.canvas.hip_range
         fits = h0 <= first and h1 >= last
-        hip = (f"HIP <b>{h0}</b>-<b>{h1}</b>" if fits else
-               f"<span style='color:#e0a030'>HIP <b>{h0}</b>-<b>{h1}</b>, clip does not fit</span>")
+        hip = (
+            f"HIP <b>{h0}</b>-<b>{h1}</b>"
+            if fits
+            else f"<span style='color:#e0a030'>HIP <b>{h0}</b>-<b>{h1}</b>, clip does not fit</span>"
+        )
         self.total_label.setText(
             f"Clip <b>{first}</b>-<b>{last}</b>   {tl.total_frames} f \u00b7 "
             f"{tl.total_frames / bridge.fps():.2f} s \u00b7 {len(tl.segments)} segment(s)"
-            f"     <span style='color:#9a9a9a'>{hip}</span>")
+            f"     <span style='color:#9a9a9a'>{hip}</span>"
+        )
 
     def _write(self, label="Kimodo timeline edit"):
         if self.node is None:
@@ -916,12 +1175,15 @@ class TimelineWidget(QtWidgets.QWidget):
         except Exception as e:
             self._set_status(str(e))
             if hou.isUIAvailable():
-                hou.ui.setStatusMessage("Kimodo: %s" % e, severity=hou.severityType.Error)
+                hou.ui.setStatusMessage(
+                    "Kimodo: %s" % e, severity=hou.severityType.Error
+                )
 
     def _generate(self):
         if self.node is None:
             return
         if not self.canvas.tl.segments:
-            self._set_status("Add at least one segment"); return
+            self._set_status("Add at least one segment")
+            return
         self._write("Kimodo timeline: generate")
         bridge.generate(self.node)

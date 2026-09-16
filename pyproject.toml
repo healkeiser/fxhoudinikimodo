@@ -1,0 +1,44 @@
+# Tool configuration only. Nothing here is installable: the Houdini half is
+# put on PYTHONPATH by fxhoudinikimodo.json, and kimodo_server.py runs inside
+# the kimodo:1.0 image from docker-compose.bridge.yaml. A [project] table
+# would describe a package that no one pip installs.
+
+[tool.ruff]
+# Houdini 20.5 ships Python 3.11; the server runs on whatever the kimodo image
+# has, which has never been pinned. py310 is the floor both are known to clear.
+target-version = "py310"
+line-length = 80
+extend-exclude = ["vendor", "backup", "houdini/otls"]
+
+[tool.ruff.format]
+# _soma77.py is one long data table and its row grouping is the data: one line
+# per limb, per finger chain, per side. Formatting it would put one element on
+# each line and make 77 joints unreadable. It is also embedded verbatim as the
+# HDA's PythonModule section, so reflowing it would mean regenerating the HDA
+# for nothing.
+exclude = ["scripts/_soma77.py"]
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "I", "B", "C4", "UP", "SIM"]
+ignore = [
+    # Line length is the formatter's call, not a second opinion.
+    "E501",
+    # `"%s" % x` is used consistently across the panel, the scripts and the
+    # tests. Converting 62 sites to f-strings would churn working code.
+    "UP031",
+    # Optional[X] over X | None: the pydantic models in kimodo_server.py
+    # resolve their annotations at runtime, and the interpreter inside
+    # kimodo:1.0 is not pinned anywhere. Optional works on every version.
+    "UP045",
+]
+
+[tool.ruff.lint.isort]
+# _soma77 is a sibling module in scripts/, not a third-party package.
+known-first-party = ["kimodo_timeline", "_soma77"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# test_houdini_live.py imports hou at module level and drives real widgets, so
+# it only runs inside a running Houdini session, not hython and not here.
+# CONTRIBUTING.md says how to run it.
+addopts = "--ignore=tests/test_houdini_live.py"

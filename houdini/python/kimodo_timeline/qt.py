@@ -11,13 +11,14 @@ one place also gives any future compatibility shim a single seam to live in.
 Imports are only half of supporting both bindings. The two helpers below cover the calls
 that are actually spelled differently, so nothing else in the panel names a Qt version.
 """
+
 try:
-    from qtpy import QtCore, QtGui, QtWidgets          # noqa: F401
-except ImportError:                                    # vendor/ step skipped
+    from qtpy import QtCore, QtGui, QtWidgets  # noqa: F401
+except ImportError:  # vendor/ step skipped
     try:
-        from PySide6 import QtCore, QtGui, QtWidgets   # noqa: F401
-    except ImportError:                                # Houdini 19.5 and older
-        from PySide2 import QtCore, QtGui, QtWidgets   # noqa: F401
+        from PySide6 import QtCore, QtGui, QtWidgets  # noqa: F401
+    except ImportError:  # Houdini 19.5 and older
+        from PySide2 import QtCore, QtGui, QtWidgets  # noqa: F401
 
 __all__ = ["QtCore", "QtGui", "QtWidgets", "event_pos", "run_exec"]
 
@@ -28,11 +29,11 @@ def event_pos(ev):
     Qt6 renamed QMouseEvent.localPos() and QWheelEvent.posF() to position(); Qt5 has no
     position() at all. Asking the event what it supports beats branching on a version.
     """
-    if hasattr(ev, "position"):          # Qt6
+    if hasattr(ev, "position"):  # Qt6
         return ev.position()
-    if hasattr(ev, "localPos"):          # Qt5 mouse events
+    if hasattr(ev, "localPos"):  # Qt5 mouse events
         return ev.localPos()
-    return ev.posF()                     # Qt5 wheel events
+    return ev.posF()  # Qt5 wheel events
 
 
 def run_exec(widget, *args):

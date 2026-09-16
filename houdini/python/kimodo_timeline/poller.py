@@ -8,15 +8,18 @@ operation scope exists to leak, which is what every earlier version of this got 
 State goes on the node, in `status` and `progress`, which the Timeline panel's own
 progress bar already renders and which show under the node in the network editor.
 """
+
 from __future__ import annotations
 
+import contextlib
 import time
 
 import hou
 import requests
+
 from .qt import QtWidgets
 
-POLL_S = 1.0          # seconds between server queries; the callback itself runs far more often
+POLL_S = 1.0  # seconds between server queries; the callback itself runs far more often
 MAX_FAILS = 3
 
 
@@ -51,9 +54,12 @@ class JobDialog(QtWidgets.QDialog):
         row = QtWidgets.QHBoxLayout()
         row.addStretch(1)
         self.btn = QtWidgets.QPushButton("Cancel")
-        self.btn.setToolTip("Cancel the job on the server." + "\n" +
-                            "Closing this window only hides it: the job keeps running and "
-                            "the Kimodo Timeline panel keeps showing its progress.")
+        self.btn.setToolTip(
+            "Cancel the job on the server."
+            + "\n"
+            + "Closing this window only hides it: the job keeps running and "
+            "the Kimodo Timeline panel keeps showing its progress."
+        )
         self.btn.clicked.connect(self._request_cancel)
         row.addWidget(self.btn)
         lay.addLayout(row)
@@ -72,33 +78,41 @@ class JobDialog(QtWidgets.QDialog):
 class JobWatcher:
     """Polls one job id and drives the node's parms. `on_done(data)` finishes the work."""
 
-    def __init__(self, node, url: str, job_id: str, label: str, on_done, poll_s: float = POLL_S):
+    def __init__(
+        self,
+        node,
+        url: str,
+        job_id: str,
+        label: str,
+        on_done,
+        poll_s: float = POLL_S,
+    ):
         self.node, self.url, self.job_id = node, url.rstrip("/"), job_id
         self.label, self.on_done, self.poll_s = label, on_done, poll_s
         self.dlg = None
         self._due = 0.0
         self._fails = 0
 
-    # -- lifecycle ------------------------------------------------------------
+    ###### Lifecycle
     def start(self) -> None:
         # hou.ui only exists in a UI session, and there is no event loop to poll from
         # without one. Say so rather than dying on an AttributeError.
         if not hou.isUIAvailable():
             raise hou.OperationFailed(
-                "Kimodo polls the job from Houdini's event loop, which needs a UI session.")
+                "Kimodo polls the job from Houdini's event loop, which needs a UI session."
+            )
         self.dlg = JobDialog("Kimodo")
         self.dlg.report(0.0, self.label)
-        self.dlg.show()               # not exec(): nothing blocks, nothing nests
+        self.dlg.show()  # not exec(): nothing blocks, nothing nests
         hou.ui.addEventLoopCallback(self._tick)
 
     def stop(self) -> None:
-        try:
+        # Already removed, or never added.
+        with contextlib.suppress(hou.OperationFailed):
             hou.ui.removeEventLoopCallback(self._tick)
-        except hou.OperationFailed:
-            pass                      # already removed, or never added
         if self.dlg is not None:
             self.dlg.close()
-            self.dlg.deleteLater()    # parented to the main window, so it would linger
+            self.dlg.deleteLater()  # parented to the main window, so it would linger
             self.dlg = None
 
     def fail(self, msg) -> None:
@@ -107,29 +121,37 @@ class JobWatcher:
         self.node.parm("status").set("Error: %s" % msg)
         self.node.parm("job_id").set("")
         if hou.isUIAvailable():
-            hou.ui.setStatusMessage("Kimodo: %s" % msg, severity=hou.severityType.Error)
+            hou.ui.setStatusMessage(
+                "Kimodo: %s" % msg, severity=hou.severityType.Error
+            )
 
-    # -- the callback ---------------------------------------------------------
+    ###### The callback
     def _tick(self) -> None:
         now = time.monotonic()
-        if now < self._due:           # runs every event-loop iteration, so leave fast
+        if now < self._due:  # runs every event-loop iteration, so leave fast
             return
         self._due = now + self.poll_s
         try:
             self._poll_once()
         except hou.ObjectWasDeleted:
-            self.stop()               # node went away mid-job
-        except Exception as e:        # never let a raising callback spin in the event loop
+            self.stop()  # node went away mid-job
+        except (
+            Exception
+        ) as e:  # never let a raising callback spin in the event loop
             self.fail(e)
 
     def _poll_once(self) -> None:
         if self.node.parm("job_id").eval() != self.job_id:
-            self.stop()               # a newer Generate replaced us
+            self.stop()  # a newer Generate replaced us
             return
         if self.dlg is not None and self.dlg.cancel_requested:
-            requests.post("%s/jobs/%s/cancel" % (self.url, self.job_id), timeout=10)
+            requests.post(
+                "%s/jobs/%s/cancel" % (self.url, self.job_id), timeout=10
+            )
             self.node.parm("status").set("Cancelling...")
-            self.dlg.cancel_requested = False   # let the server report it back as cancelled
+            self.dlg.cancel_requested = (
+                False  # let the server report it back as cancelled
+            )
             return
         try:
             r = requests.get("%s/jobs/%s" % (self.url, self.job_id), timeout=10)
@@ -141,7 +163,9 @@ class JobWatcher:
             self._fails = 0
         except requests.RequestException as e:
             self._fails += 1
-            self.node.parm("status").set("Poll error (%d/%d): %s" % (self._fails, MAX_FAILS, e))
+            self.node.parm("status").set(
+                "Poll error (%d/%d): %s" % (self._fails, MAX_FAILS, e)
+            )
             if self._fails >= MAX_FAILS:
                 self.fail("Lost contact with the server while polling: %s" % e)
             return
@@ -153,7 +177,10 @@ class JobWatcher:
             self.stop()
             self.on_done(data, suffix)
         elif status == "failed":
-            self.fail("Generation failed: %s" % (data.get("error") or "no detail from server"))
+            self.fail(
+                "Generation failed: %s"
+                % (data.get("error") or "no detail from server")
+            )
         elif status == "cancelled":
             self.stop()
             self.node.parm("status").set("Cancelled")
@@ -162,8 +189,11 @@ class JobWatcher:
             prog, phase = data.get("progress"), data.get("phase")
             if prog is not None:
                 self.node.parm("progress").set(float(prog))
-                text = ("%s %d%%" % (self.label, int(prog * 100))
-                        + (" \u00b7 %s" % phase if phase else "") + suffix)
+                text = (
+                    "%s %d%%" % (self.label, int(prog * 100))
+                    + (" \u00b7 %s" % phase if phase else "")
+                    + suffix
+                )
                 self.node.parm("status").set(text)
                 if self.dlg is not None:
                     self.dlg.report(float(prog), text)

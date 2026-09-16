@@ -9,19 +9,20 @@ no Qt required, so they run anywhere:
 They do not replace the live-session test (tests/test_houdini_live.py), which drives the
 real widgets. They catch the same mistakes far earlier and for free.
 """
+
 import ast
 import io
-import os
 import sys
 import tokenize
+from pathlib import Path
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-PKG = os.path.join(HERE, "..", "houdini", "python", "kimodo_timeline")
-HDA_SRC = os.path.join(HERE, "..", "scripts", "create_hda.py")
+HERE = Path(__file__).resolve().parent
+PKG = HERE.parent / "houdini" / "python" / "kimodo_timeline"
+HDA_SRC = HERE.parent / "scripts" / "create_hda.py"
 
 
 def _read(path):
-    return io.open(path, encoding="utf-8").read()
+    return Path(path).read_text(encoding="utf-8")
 
 
 def _code(src):
@@ -40,7 +41,9 @@ def _code(src):
         total += len(line)
 
     def blank(begin, end):
-        for i in range(starts[begin[0] - 1] + begin[1], starts[end[0] - 1] + end[1]):
+        for i in range(
+            starts[begin[0] - 1] + begin[1], starts[end[0] - 1] + end[1]
+        ):
             if out[i] != chr(10):
                 out[i] = " "
 
@@ -53,18 +56,22 @@ def _code(src):
         if not isinstance(body, list) or not body:
             continue
         first = body[0]
-        if (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
-                and isinstance(first.value.value, str)):
-            blank((first.lineno, first.col_offset),
-                  (first.end_lineno, first.end_col_offset))
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+        ):
+            blank(
+                (first.lineno, first.col_offset),
+                (first.end_lineno, first.end_col_offset),
+            )
     return "".join(out)
 
 
 def _modules():
     """Every panel module, comments and docstrings blanked. Use _read for raw source."""
-    for name in sorted(os.listdir(PKG)):
-        if name.endswith(".py"):
-            yield name, _code(_read(os.path.join(PKG, name)))
+    for path in sorted(PKG.glob("*.py")):
+        yield path.name, _code(_read(path))
 
 
 def _func_source(src, name):
@@ -82,7 +89,9 @@ def _called_names(src):
     for n in ast.walk(ast.parse(src)):
         if isinstance(n, ast.Call):
             f = n.func
-            out.add(f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", ""))
+            out.add(
+                f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", "")
+            )
     return out
 
 
@@ -98,42 +107,60 @@ def test_only_the_context_menu_runs_a_nested_loop():
     and no processEvents pump anywhere, which is only exec spelled differently."""
     for name, src in _modules():
         assert "processEvents" not in _called_names(src), (
-            "%s pumps processEvents; that is a nested event loop wearing a hat" % name)
+            "%s pumps processEvents; that is a nested event loop wearing a hat"
+            % name
+        )
         assert not (_called_names(src) & {"exec", "exec_"}), (
-            "%s calls exec directly; go through qt.run_exec" % name)
-    src = _code(_read(os.path.join(PKG, "widget.py")))
+            "%s calls exec directly; go through qt.run_exec" % name
+        )
+    src = _code(_read(PKG / "widget.py"))
     menu_fn = _func_source(src, "contextMenuEvent")
     assert src.count("run_exec(") == 1, (
-        "run_exec has escaped contextMenuEvent; only the menu may run a nested loop")
-    assert "run_exec(menu" in menu_fn, "the context menu is the one sanctioned exec"
+        "run_exec has escaped contextMenuEvent; only the menu may run a nested loop"
+    )
+    assert "run_exec(menu" in menu_fn, (
+        "the context menu is the one sanctioned exec"
+    )
 
 
 def test_the_dialog_is_shown_not_run():
     """_ask hands its result to a callback rather than returning it, because returning
     one would mean waiting for it, and waiting means a nested loop."""
-    src = _code(_read(os.path.join(PKG, "widget.py")))
+    src = _code(_read(PKG / "widget.py"))
     ask = _func_source(src, "_ask")
     assert ".show()" in ask, "_ask must show() the dialog"
-    assert "finished.connect" in ask, "_ask must continue from finished, not from a wait"
-    assert "WA_DeleteOnClose" in ask, "a main-window-parented dialog needs a lifetime"
+    assert "finished.connect" in ask, (
+        "_ask must continue from finished, not from a wait"
+    )
+    assert "WA_DeleteOnClose" in ask, (
+        "a main-window-parented dialog needs a lifetime"
+    )
 
 
 def test_context_menu_handlers_run_after_the_menu_closes():
     """fxhoucachemanager reads the chosen action back from exec and runs it afterwards,
     so nothing of its own runs inside the menu's event loop. Connecting to `triggered`
     would put our Houdini writes back inside that loop."""
-    src = _code(_read(os.path.join(PKG, "widget.py")))
+    src = _code(_read(PKG / "widget.py"))
     menu_fn = _func_source(src, "contextMenuEvent")
-    assert "triggered" not in menu_fn, "do not connect to triggered; dispatch after exec"
-    assert "addAction(" in menu_fn and "lambda" in menu_fn, "actions map to callables"
+    assert "triggered" not in menu_fn, (
+        "do not connect to triggered; dispatch after exec"
+    )
+    assert "addAction(" in menu_fn and "lambda" in menu_fn, (
+        "actions map to callables"
+    )
 
 
 def test_no_interruptable_operation_in_the_panel():
     """Blocking the main thread to hold a progress dialog is what wedged Houdini. Jobs are
     polled from the event loop instead (poller.JobWatcher)."""
     for name, src in _modules():
-        assert "InterruptableOperation" not in src, "%s must not block on an operation" % name
-    assert "InterruptableOperation" not in _code(_read(HDA_SRC)), "the HDA callback must not either"
+        assert "InterruptableOperation" not in src, (
+            "%s must not block on an operation" % name
+        )
+    assert "InterruptableOperation" not in _code(_read(HDA_SRC)), (
+        "the HDA callback must not either"
+    )
 
 
 def test_nothing_sleeps():
@@ -141,7 +168,9 @@ def test_nothing_sleeps():
     every poll loop that used to."""
     for name, src in _modules():
         assert "time.sleep" not in src, "%s must not sleep" % name
-    assert "time.sleep" not in _code(_read(HDA_SRC)), "the HDA callback must not sleep"
+    assert "time.sleep" not in _code(_read(HDA_SRC)), (
+        "the HDA callback must not sleep"
+    )
 
 
 def test_only_the_shim_names_a_qt_binding():
@@ -151,7 +180,9 @@ def test_only_the_shim_names_a_qt_binding():
         if name == "qt.py":
             continue
         for binding in ("PySide2", "PySide6", "qtpy"):
-            assert binding not in src, "%s names %s; import from .qt instead" % (name, binding)
+            assert binding not in src, (
+                "%s names %s; import from .qt instead" % (name, binding)
+            )
 
 
 def test_no_qt6_only_calls_outside_the_shim():
@@ -160,7 +191,9 @@ def test_no_qt6_only_calls_outside_the_shim():
     for name, src in _modules():
         if name == "qt.py":
             continue
-        assert ".position()" not in src, "%s uses Qt6-only position(); use event_pos()" % name
+        assert ".position()" not in src, (
+            "%s uses Qt6-only position(); use event_pos()" % name
+        )
 
 
 def test_context_menu_is_houdinis_own():
@@ -171,12 +204,17 @@ def test_context_menu_is_houdinis_own():
     One reference on self, because popup() returns before the menu is used and an
     unparented menu would otherwise die with this frame. The next right-click replaces
     it: one menu at a time, so the four-alive-in-one-session leak cannot come back."""
-    src = _code(_read(os.path.join(PKG, "widget.py")))
-    called = _called_names(src)          # calls, not text: the comments explain the trap
+    src = _code(_read(PKG / "widget.py"))
+    called = _called_names(
+        src
+    )  # calls, not text: the comments explain the trap
     assert "Menu" in called, "build the context menu with hou.qt.Menu()"
-    assert "QMenu" not in called, "a plain QtWidgets.QMenu is invisible to Houdini"
+    assert "QMenu" not in called, (
+        "a plain QtWidgets.QMenu is invisible to Houdini"
+    )
     assert "self._menu = menu" in _func_source(src, "contextMenuEvent"), (
-        "the menu needs one reference to survive popup()")
+        "the menu needs one reference to survive popup()"
+    )
 
 
 def test_the_canvas_never_leaks_a_press_into_houdinis_pane():
@@ -192,14 +230,21 @@ def test_the_canvas_never_leaks_a_press_into_houdinis_pane():
 
     Press and release must consume the same buttons. An interactive canvas has no
     business letting an ancestor see its mouse events at all."""
-    src = _code(_read(os.path.join(PKG, "widget.py")))
+    src = _code(_read(PKG / "widget.py"))
     press = _func_source(src, "mousePressEvent")
-    assert "super()" not in press, "a press given to super() is ignored, and then propagates"
-    assert "ignore()" not in press, "an ignored press propagates into Houdini's pane"
-    assert "accept()" in press, "consume the press the same way the release is consumed"
+    assert "super()" not in press, (
+        "a press given to super() is ignored, and then propagates"
+    )
+    assert "ignore()" not in press, (
+        "an ignored press propagates into Houdini's pane"
+    )
+    assert "accept()" in press, (
+        "consume the press the same way the release is consumed"
+    )
     release = _func_source(src, "mouseReleaseEvent")
     assert "super()" not in release and "ignore()" not in release, (
-        "if the release starts propagating, the press must too")
+        "if the release starts propagating, the press must too"
+    )
 
 
 def test_deferral_waits_for_the_mouse_release():
@@ -207,9 +252,11 @@ def test_deferral_waits_for_the_mouse_release():
     on the next release (hou.qt.skipClosingMenusForCurrentButtonPress documents both), so
     later() runs fn only once nothing is held. Belt and braces, not the cure for the input
     wedge: that was the nested event loop, see test_nothing_opens_a_nested_event_loop."""
-    src = _code(_read(os.path.join(PKG, "widget.py")))
+    src = _code(_read(PKG / "widget.py"))
     fn = _func_source(src, "later")
-    assert "mouseButtons()" in fn, "later() must not run while a mouse button is held"
+    assert "mouseButtons()" in fn, (
+        "later() must not run while a mouse button is held"
+    )
     assert "NoButton" in fn, "later() must compare against Qt.NoButton"
 
 
@@ -218,42 +265,61 @@ def test_status_text_is_always_elided():
     left to size itself widens the footer and drags the whole panel out with it, so every
     writer must go through _set_status, which elides to STATUS_W and puts the full text
     in the tooltip."""
-    src = _code(_read(os.path.join(PKG, "widget.py")))
+    src = _code(_read(PKG / "widget.py"))
     setter = _func_source(src, "_set_status")
     assert "elidedText" in setter, "_set_status must elide"
-    assert "setToolTip" in setter, "_set_status must keep the full text in the tooltip"
+    assert "setToolTip" in setter, (
+        "_set_status must keep the full text in the tooltip"
+    )
     assert "STATUS_W" in src, "the status label needs a width cap"
     body = src.replace(setter, "")
     assert "status_label.setText(" not in body, (
-        "write status through _set_status, not status_label.setText")
+        "write status through _set_status, not status_label.setText"
+    )
 
 
 def test_source_is_ascii():
     """Escapes, not literal glyphs, so the files survive any encoding they pass through.
     Raw source on purpose: a stray glyph in a comment counts."""
-    for name in sorted(os.listdir(PKG)):
-        if not name.endswith(".py"):
-            continue
-        src = _read(os.path.join(PKG, name))
-        bad = [(i + 1, line) for i, line in enumerate(src.splitlines())
-               if any(ord(c) > 126 for c in line)]
-        assert not bad, "%s has literal non-ASCII on line(s) %s" % (name, [b[0] for b in bad])
+    for path in sorted(PKG.glob("*.py")):
+        src = _read(path)
+        bad = [
+            (i + 1, line)
+            for i, line in enumerate(src.splitlines())
+            if any(ord(c) > 126 for c in line)
+        ]
+        assert not bad, "%s has literal non-ASCII on line(s) %s" % (
+            path.name,
+            [b[0] for b in bad],
+        )
 
 
 def test_poller_never_touches_hou_ui_at_import():
     """hou.ui does not exist in hython. The module must import there and refuse politely
     only when something actually tries to start a watch."""
-    src = _read(os.path.join(PKG, "poller.py"))
+    src = _read(PKG / "poller.py")
     tree = ast.parse(src)
+
     def is_docstring(n):
-        return (isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant)
-                and isinstance(n.value.value, str))
-    toplevel = [n for n in tree.body
-                if not isinstance(n, (ast.FunctionDef, ast.ClassDef))
-                and not is_docstring(n)]
+        return (
+            isinstance(n, ast.Expr)
+            and isinstance(n.value, ast.Constant)
+            and isinstance(n.value.value, str)
+        )
+
+    toplevel = [
+        n
+        for n in tree.body
+        if not isinstance(n, (ast.FunctionDef, ast.ClassDef))
+        and not is_docstring(n)
+    ]
     joined = "\n".join(ast.get_source_segment(src, n) or "" for n in toplevel)
-    assert "hou.ui" not in joined, "poller.py must not touch hou.ui at import time"
-    assert "isUIAvailable" in src, "JobWatcher.start must refuse a non-UI session"
+    assert "hou.ui" not in joined, (
+        "poller.py must not touch hou.ui at import time"
+    )
+    assert "isUIAvailable" in src, (
+        "JobWatcher.start must refuse a non-UI session"
+    )
 
 
 if __name__ == "__main__":

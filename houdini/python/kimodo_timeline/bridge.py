@@ -1,4 +1,5 @@
 """Everything that touches hou lives here; model.py and the tests never import it."""
+
 from __future__ import annotations
 
 import hou
@@ -28,7 +29,9 @@ def all_nodes():
 def node_at(path):
     """The Kimodo Motion node at `path`, or None."""
     n = hou.node(path) if path else None
-    return n if n is not None and n.type().name().startswith(TYPE_PREFIX) else None
+    return (
+        n if n is not None and n.type().name().startswith(TYPE_PREFIX) else None
+    )
 
 
 def load(node) -> Timeline:
@@ -52,7 +55,9 @@ def save(node, tl: Timeline, label: str = "Kimodo timeline edit") -> None:
         node.parm("has_timeline").set(1)
         if tl.segments:
             node.parm("duration_frames").set(tl.total_frames)
-        node.parm("pose_keyframes").set(" ".join(str(k) for k in tl.tracks.get("fullbody", [])))
+        node.parm("pose_keyframes").set(
+            " ".join(str(k) for k in tl.tracks.get("fullbody", []))
+        )
         # keep the node's Segments multiparm showing the same thing
         node.type().hdaModule().rebuild_segments(node)
 

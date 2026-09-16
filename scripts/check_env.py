@@ -80,14 +80,14 @@ def main():
         results.append(check("Docker daemon running", daemon_ok))
 
         # GPU pass-through
-        gpu_ok, out = run(
-            "docker run --rm --gpus all ubuntu nvidia-smi"
-        )
+        gpu_ok, out = run("docker run --rm --gpus all ubuntu nvidia-smi")
         results.append(
             check(
                 "Docker GPU pass-through (nvidia-smi visible in container)",
                 gpu_ok,
-                "" if gpu_ok else "Check nvidia-container-toolkit and WSL2 GPU support",
+                ""
+                if gpu_ok
+                else "Check nvidia-container-toolkit and WSL2 GPU support",
             )
         )
 

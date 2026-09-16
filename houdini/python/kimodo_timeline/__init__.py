@@ -9,4 +9,5 @@ widget.py  the Qt panel (binding chosen by qt.py)
 def create_widget():
     """Entry point used by houdini/python_panels/kimodo_timeline.pypanel."""
     from .widget import TimelineWidget
+
     return TimelineWidget()

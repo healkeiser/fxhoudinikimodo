@@ -79,11 +79,19 @@ your editor or a script rewrites those line endings, `hotl` cannot repack the HD
 
 ## Tests
 
-Two of the three need neither Houdini nor a GPU, so there is no excuse for skipping them:
+Two of the three need neither Houdini nor a GPU, so there is no excuse for skipping them.
+Either run them as plain scripts, which needs nothing installed:
 
 ```shell
 python tests/test_timeline_model.py     # pure-python timeline model
 python tests/test_panel_conventions.py  # source-level guards, see below
+```
+
+or under pytest, which is what CI runs. `pyproject.toml` excludes the live test from
+collection, so `pytest` on its own is the whole runnable suite:
+
+```shell
+pytest -q
 ```
 
 The third drives the real widgets and has to run inside a running Houdini, not `hython`,
@@ -118,6 +126,12 @@ from.
 - Comments explain why, not what. The repo leans heavily on this, and it is why the
   reasoning behind an odd-looking workaround usually sits right above it.
 - Say "segment", never "sequence". One concept, one word.
+- `ruff check .` and `ruff format --check .` must both pass; CI runs them. The config is
+  in `pyproject.toml`: 80 columns, and the rules that would only restyle working code are
+  switched off there, so anything the linter does report is worth reading.
+- `scripts/_soma77.py` is excluded from the formatter on purpose. Its row grouping is the
+  data, and it is embedded verbatim as the HDA's PythonModule section, so reflowing it
+  would mean regenerating the HDA for nothing.
 
 ## Commits
 

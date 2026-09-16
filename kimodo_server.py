@@ -7,10 +7,9 @@ import logging
 import os
 import time as _time
 import uuid
-from typing import Optional
-
-import pathlib
 from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Optional
 
 import numpy as np
 from fastapi import FastAPI, HTTPException
@@ -20,7 +19,7 @@ from pydantic import BaseModel
 log = logging.getLogger("kimodo_server")
 logging.basicConfig(level=logging.INFO)
 
-OUTPUT_DIR = pathlib.Path(os.environ.get("OUTPUT_DIR", "/workspace/output"))
+OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", "/workspace/output"))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 DEV_REFERENCE = OUTPUT_DIR / "dev_reference.npz"
@@ -72,12 +71,15 @@ def _build_initial_motion(cf, model):
     if not cf:
         return None
     import torch
+
     skeleton = model.skeleton
     device = skeleton.device
     lr = torch.tensor(cf["local_rot_mats"], dtype=torch.float32, device=device)
     rp = torch.tensor(cf["root_positions"], dtype=torch.float32, device=device)
     if lr.ndim != 4 or rp.ndim != 2 or lr.shape[0] != rp.shape[0]:
-        raise ValueError("continue_from needs local_rot_mats [n,J,3,3] and root_positions [n,3]")
+        raise ValueError(
+            "continue_from needs local_rot_mats [n,J,3,3] and root_positions [n,3]"
+        )
     if lr.shape[1] != skeleton.nbjoints:
         lr = skeleton.from_SOMASkeleton77(lr)
     feats = model.motion_rep(lr[None], rp[None], to_normalize=False)
@@ -98,8 +100,11 @@ def _build_constraints(constraints, model) -> list:
         return []
     import torch
     from kimodo.constraints import (
-        load_constraints_lst, FullBodyConstraintSet, EndEffectorConstraintSet,
+        EndEffectorConstraintSet,
+        FullBodyConstraintSet,
+        load_constraints_lst,
     )
+
     skeleton = model.skeleton
     device = skeleton.device
     # The HDA sends SOMA77 (77-joint) global data, but a SOMA-RP model constrains on
@@ -108,25 +113,41 @@ def _build_constraints(constraints, model) -> list:
     src77 = getattr(skeleton, "somaskel77", None)
     skel_slice = (
         skeleton.get_skel_slice(src77)
-        if src77 is not None and getattr(src77, "nbjoints", None) != skeleton.nbjoints
+        if src77 is not None
+        and getattr(src77, "nbjoints", None) != skeleton.nbjoints
         else None
     )
     std, extra = [], []
     for c in constraints:
         t = c.get("type")
         if t in ("fullbody-global", "ee-global"):
-            pos = torch.tensor(c["global_joints_positions"], dtype=torch.float32, device=device)
-            rot = torch.tensor(c["global_joints_rots"], dtype=torch.float32, device=device)
+            pos = torch.tensor(
+                c["global_joints_positions"], dtype=torch.float32, device=device
+            )
+            rot = torch.tensor(
+                c["global_joints_rots"], dtype=torch.float32, device=device
+            )
             if skel_slice is not None and pos.shape[1] != skeleton.nbjoints:
                 pos, rot = pos[:, skel_slice], rot[:, skel_slice]
             fi = torch.tensor(c["frame_indices"])
             sr = c.get("smooth_root_2d")
-            sr = torch.tensor(sr, dtype=torch.float32, device=device) if sr else None
+            sr = (
+                torch.tensor(sr, dtype=torch.float32, device=device)
+                if sr
+                else None
+            )
             if t == "fullbody-global":
-                extra.append(FullBodyConstraintSet(skeleton, fi, pos, rot, smooth_root_2d=sr))
+                extra.append(
+                    FullBodyConstraintSet(
+                        skeleton, fi, pos, rot, smooth_root_2d=sr
+                    )
+                )
             else:
-                extra.append(EndEffectorConstraintSet(
-                    skeleton, fi, pos, rot, sr, joint_names=c["joint_names"]))
+                extra.append(
+                    EndEffectorConstraintSet(
+                        skeleton, fi, pos, rot, sr, joint_names=c["joint_names"]
+                    )
+                )
         else:
             std.append(c)
     return (load_constraints_lst(std, skeleton) if std else []) + extra
@@ -141,14 +162,20 @@ class _Progress:
     below 1 until the NPZ is written."""
 
     def __init__(self, job: dict, expected_loops: int):
-        self.job, self.expected, self.done_loops = job, max(1, expected_loops), 0
+        self.job, self.expected, self.done_loops = (
+            job,
+            max(1, expected_loops),
+            0,
+        )
         self.job["expected_loops"] = self.expected
         self._set_phase("encoding text")
 
     def _set_phase(self, phase: str) -> None:
         global _encode_est_seen
         now = _time.monotonic()
-        if self.job.get("phase") == "encoding text":   # not on the first call, no phase yet
+        if (
+            self.job.get("phase") == "encoding text"
+        ):  # not on the first call, no phase yet
             _encode_est_seen = max(0.1, now - self.job["phase_started"])
         self.job["phase"] = phase
         self.job["phase_started"] = now
@@ -156,16 +183,26 @@ class _Progress:
     def __call__(self, iterable, **_):
         items = list(iterable)
         n = max(1, len(items))
-        self._set_phase(f"denoising segment {self.done_loops + 1}/{self.expected}")
+        self._set_phase(
+            f"denoising segment {self.done_loops + 1}/{self.expected}"
+        )
         for i, it in enumerate(items):
-            self.job["progress"] = min(0.99, (self.done_loops + i / n) / self.expected)
+            self.job["progress"] = min(
+                0.99, (self.done_loops + i / n) / self.expected
+            )
             yield it
         self.done_loops += 1
         self.job["progress"] = min(0.99, self.done_loops / self.expected)
-        self._set_phase("post-processing" if self.done_loops >= self.expected else "encoding text")
+        self._set_phase(
+            "post-processing"
+            if self.done_loops >= self.expected
+            else "encoding text"
+        )
 
 
-def _infer_resident(req: "GenerateRequest", out_path: pathlib.Path, job: Optional[dict] = None) -> None:
+def _infer_resident(
+    req: GenerateRequest, out_path: Path, job: Optional[dict] = None
+) -> None:
     """Blocking in-process inference. Mirrors kimodo/scripts/generate.py main()."""
     from kimodo.exports.motion_io import save_kimodo_npz
 
@@ -174,7 +211,9 @@ def _infer_resident(req: "GenerateRequest", out_path: pathlib.Path, job: Optiona
     num_frames = [max(1, int(d * model.fps)) for d in durations]
     constraint_lst = _build_constraints(req.constraints, model)
     initial_motion = _build_initial_motion(req.continue_from, model)
-    progress = _Progress(job if job is not None else {}, expected_loops=len(texts))
+    progress = _Progress(
+        job if job is not None else {}, expected_loops=len(texts)
+    )
     # Kimodo's multi-prompt path does not forward `progress_bar` to the sampling loop
     # (kimodo_model._multiprompt calls self._generate without it), so inject it there.
     # Inference is serialised by _model_lock, so patching the resident model is safe.
@@ -200,10 +239,14 @@ def _infer_resident(req: "GenerateRequest", out_path: pathlib.Path, job: Optiona
             progress_bar=progress,
         )
     finally:
-        del model._generate          # back to the class method
+        del model._generate  # back to the class method
     n = int(output["posed_joints"].shape[0])
     single = {
-        k: (v[0] if hasattr(v, "shape") and len(v.shape) > 0 and v.shape[0] == n else v)
+        k: (
+            v[0]
+            if hasattr(v, "shape") and len(v.shape) > 0 and v.shape[0] == n
+            else v
+        )
         for k, v in output.items()
     }
     save_kimodo_npz(str(out_path), single)
@@ -224,13 +267,15 @@ class GenerateRequest(BaseModel):
     prompt: str = ""
     duration: float = 3.0
     model: str = "soma-rp"
-    force: bool = False          # bypass the cache and re-run inference
+    force: bool = False  # bypass the cache and re-run inference
     # Continue an existing clip instead of starting fresh. Carries the tail of a clip
     # you already have as {"local_rot_mats": [n,77,3,3], "root_positions": [n,3]}; the
     # first requested segment then takes Kimodo's transition path and joins onto it,
     # and the returned NPZ is the new tail only (its first frames are the blended seam).
     continue_from: Optional[dict] = None
-    constraints: Optional[list] = None   # Kimodo constraint dicts (type/frame_indices/...)
+    constraints: Optional[list] = (
+        None  # Kimodo constraint dicts (type/frame_indices/...)
+    )
     # Multi-prompt timeline: ordered segments [{"prompt": str, "duration": seconds}, ...].
     # When given, `prompt`/`duration` are ignored and Kimodo blends consecutive segments
     # over `transition_frames` clip samples at each boundary.
@@ -242,7 +287,9 @@ class GenerateRequest(BaseModel):
             texts = [str(s.get("prompt", "")).strip() for s in self.segments]
             durs = [float(s.get("duration", 0.0)) for s in self.segments]
             if not all(texts) or not all(d > 0 for d in durs):
-                raise ValueError("Every segment needs a non-empty prompt and a duration > 0.")
+                raise ValueError(
+                    "Every segment needs a non-empty prompt and a duration > 0."
+                )
             return texts, durs
         if not self.prompt.strip():
             raise ValueError("Either `prompt` or `segments` is required.")
@@ -251,32 +298,42 @@ class GenerateRequest(BaseModel):
 
 class JobStatus(BaseModel):
     job_id: str
-    status: str          # queued | running | done | failed | cancelled
+    status: str  # queued | running | done | failed | cancelled
     npz_path: Optional[str] = None
     prompt: Optional[str] = None
     frames: Optional[int] = None
     joints: Optional[int] = None
     error: Optional[str] = None
     elapsed: Optional[float] = None
-    cached: Optional[bool] = None    # True if served from a cached NPZ
-    progress: Optional[float] = None  # 0..1 while running (denoising steps done / expected)
-    phase: Optional[str] = None       # encoding text | denoising segment k/N | post-processing
+    cached: Optional[bool] = None  # True if served from a cached NPZ
+    progress: Optional[float] = (
+        None  # 0..1 while running (denoising steps done / expected)
+    )
+    phase: Optional[str] = (
+        None  # encoding text | denoising segment k/N | post-processing
+    )
 
 
-def _cache_key(req: "GenerateRequest") -> str:
+def _cache_key(req: GenerateRequest) -> str:
     """Identical requests share one NPZ. Single-prompt keys are unchanged from before the
     timeline existed; segment requests add their own fields."""
-    payload = {"prompt": req.prompt, "duration": req.duration, "model": req.model,
-               "constraints": req.constraints}
+    payload = {
+        "prompt": req.prompt,
+        "duration": req.duration,
+        "model": req.model,
+        "constraints": req.constraints,
+    }
     if req.continue_from:
         payload["continue_from"] = req.continue_from
     if req.segments:
         payload["segments"] = req.segments
         payload["transition_frames"] = req.transition_frames
-    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True).encode("utf-8")
+    ).hexdigest()
 
 
-def _describe(req: "GenerateRequest") -> str:
+def _describe(req: GenerateRequest) -> str:
     if req.segments:
         return " | ".join(str(s.get("prompt", "")) for s in req.segments)
     return req.prompt
@@ -295,24 +352,33 @@ def download_job(job_id: str) -> FileResponse:
         raise HTTPException(404, f"Job {job_id} not found.")
     npz = _jobs[job_id].get("npz_path")
     if not npz:
-        raise HTTPException(409, f"Job {job_id} has no output (status={_jobs[job_id]['status']}).")
-    path = pathlib.Path(npz).resolve()
+        raise HTTPException(
+            409,
+            f"Job {job_id} has no output (status={_jobs[job_id]['status']}).",
+        )
+    path = Path(npz).resolve()
     if not path.is_relative_to(OUTPUT_DIR.resolve()):
         raise HTTPException(403, "Output path is outside the output directory.")
     if not path.exists():
         raise HTTPException(404, "Output file is missing.")
-    return FileResponse(str(path), media_type="application/octet-stream", filename=path.name)
+    return FileResponse(
+        str(path), media_type="application/octet-stream", filename=path.name
+    )
 
 
 @app.post("/generate", status_code=202)
 async def generate(req: GenerateRequest) -> JobStatus:
     try:
-        req.texts_and_durations()   # validate prompt/segments before queuing
+        req.texts_and_durations()  # validate prompt/segments before queuing
     except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+        raise HTTPException(status_code=422, detail=str(e)) from e
     desc = _describe(req)
     job_id = uuid.uuid4().hex
-    _jobs[job_id] = {"status": "queued", "started_at": _time.monotonic(), "prompt": desc}
+    _jobs[job_id] = {
+        "status": "queued",
+        "started_at": _time.monotonic(),
+        "prompt": desc,
+    }
     asyncio.create_task(_run_job(job_id, req))
     log.info("[JOB] %s queued \u2014 prompt='%s'", job_id[:8], desc)
     return JobStatus(job_id=job_id, status="queued", prompt=desc)
@@ -342,7 +408,9 @@ _encode_est_seen: Optional[float] = None
 
 def _elapsed(job: dict) -> float:
     """Seconds since the job was queued, to 0.1 s."""
-    return round(_time.monotonic() - job.get("started_at", _time.monotonic()), 1)
+    return round(
+        _time.monotonic() - job.get("started_at", _time.monotonic()), 1
+    )
 
 
 def _cancelled(job: dict) -> bool:
@@ -410,7 +478,7 @@ async def cancel_job(job_id: str) -> JobStatus:
 
 async def _run_job(job_id: str, req: GenerateRequest) -> None:
     job = _jobs[job_id]
-    if _cancelled(job):                   # cancelled while still queued
+    if _cancelled(job):  # cancelled while still queued
         return
     job["status"] = "running"
     job["progress"] = 0.0
@@ -418,12 +486,20 @@ async def _run_job(job_id: str, req: GenerateRequest) -> None:
     try:
         if MOCK_MODE:
             if not DEV_REFERENCE.exists():
-                job.update(status="failed", error=f"dev_reference.npz not found at {DEV_REFERENCE}")
+                job.update(
+                    status="failed",
+                    error=f"dev_reference.npz not found at {DEV_REFERENCE}",
+                )
                 return
             log.info("[MOCK] %s \u2192 %s", job_id[:8], DEV_REFERENCE)
             T, J = _clip_shape(DEV_REFERENCE)
-            job.update(status="done", npz_path=str(DEV_REFERENCE), frames=T, joints=J,
-                       elapsed=_elapsed(job))
+            job.update(
+                status="done",
+                npz_path=str(DEV_REFERENCE),
+                frames=T,
+                joints=J,
+                elapsed=_elapsed(job),
+            )
             return
 
         out_path = OUTPUT_DIR / f"{_cache_key(req)}.npz"
@@ -431,8 +507,14 @@ async def _run_job(job_id: str, req: GenerateRequest) -> None:
         if not req.force and out_path.exists():
             T, J = _clip_shape(out_path)
             log.info("[CACHE] %s \u2192 %s", job_id[:8], out_path.name)
-            job.update(status="done", npz_path=str(out_path), frames=T, joints=J,
-                       cached=True, elapsed=_elapsed(job))
+            job.update(
+                status="done",
+                npz_path=str(out_path),
+                frames=T,
+                joints=J,
+                cached=True,
+                elapsed=_elapsed(job),
+            )
             return
 
         # In-process inference, serialised on the single GPU. Cannot be hard-
@@ -442,24 +524,52 @@ async def _run_job(job_id: str, req: GenerateRequest) -> None:
                 return
             log.info("[GEN] %s prompt=%r", job_id[:8], _describe(req))
             await asyncio.to_thread(_infer_resident, req, out_path, job)
-        if _cancelled(job):                   # cancelled while inference ran
+        if _cancelled(job):  # cancelled while inference ran
             return
 
         elapsed = _elapsed(job)
         if not out_path.exists():
-            job.update(status="failed", error="Output file not found after inference.", elapsed=elapsed)
+            job.update(
+                status="failed",
+                error="Output file not found after inference.",
+                elapsed=elapsed,
+            )
             return
 
         T, J = _clip_shape(out_path)
-        out_path.with_suffix(".json").write_text(json.dumps({
-            "prompt": _describe(req), "duration": req.duration, "model": req.model,
-            "segments": req.segments, "transition_frames": req.transition_frames,
-            "frames": T, "joints": J, "created": _time.time(),
-        }, indent=2))
-        log.info("[DONE] %s \u2014 %d frames, %d joints, %.1fs", job_id[:8], T, J, elapsed)
-        job.update(status="done", npz_path=str(out_path), frames=T, joints=J,
-                   cached=False, elapsed=elapsed)
+        out_path.with_suffix(".json").write_text(
+            json.dumps(
+                {
+                    "prompt": _describe(req),
+                    "duration": req.duration,
+                    "model": req.model,
+                    "segments": req.segments,
+                    "transition_frames": req.transition_frames,
+                    "frames": T,
+                    "joints": J,
+                    "created": _time.time(),
+                },
+                indent=2,
+            )
+        )
+        log.info(
+            "[DONE] %s \u2014 %d frames, %d joints, %.1fs",
+            job_id[:8],
+            T,
+            J,
+            elapsed,
+        )
+        job.update(
+            status="done",
+            npz_path=str(out_path),
+            frames=T,
+            joints=J,
+            cached=False,
+            elapsed=elapsed,
+        )
     except Exception as exc:  # never leave a job stuck in "running"
         if job.get("status") != "cancelled":
             log.exception("[FAIL] %s", job_id[:8])
-            job.update(status="failed", error=str(exc)[-500:], elapsed=_elapsed(job))
+            job.update(
+                status="failed", error=str(exc)[-500:], elapsed=_elapsed(job)
+            )

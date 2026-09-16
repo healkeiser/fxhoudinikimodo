@@ -23,15 +23,14 @@ Known dead ends, so nobody re-treads them:
   - QDialog.exec() on its own does not cause it; two were run in a live session with no
     ill effect.
 """
-import io
-import json
-import os
-import tempfile
 
-import hou
+import json
+import tempfile
+from pathlib import Path
+
 from PySide6 import QtCore, QtGui, QtWidgets
 
-_STORE = os.path.join(tempfile.gettempdir(), "kimodo_wedge_baseline.json")
+_STORE = Path(tempfile.gettempdir()) / "kimodo_wedge_baseline.json"
 
 
 def _widget_row(w):
@@ -41,7 +40,9 @@ def _widget_row(w):
         "enabled": w.isEnabled(),
         "visible": w.isVisible(),
         "WA_Disabled": w.testAttribute(QtCore.Qt.WA_Disabled),
-        "WA_TransparentForMouseEvents": w.testAttribute(QtCore.Qt.WA_TransparentForMouseEvents),
+        "WA_TransparentForMouseEvents": w.testAttribute(
+            QtCore.Qt.WA_TransparentForMouseEvents
+        ),
         "updatesEnabled": w.updatesEnabled(),
         "size": (w.width(), w.height()),
     }
@@ -53,34 +54,55 @@ def capture():
     mw = gapp.modalWindow()
     snap = {
         "modalWindow": (mw.title() or "untitled") if mw else None,
-        "activeModalWidget": type(app.activeModalWidget()).__name__ if app.activeModalWidget() else None,
-        "activePopupWidget": type(app.activePopupWidget()).__name__ if app.activePopupWidget() else None,
-        "mouseGrabber": type(QtWidgets.QWidget.mouseGrabber()).__name__ if QtWidgets.QWidget.mouseGrabber() else None,
-        "keyboardGrabber": type(QtWidgets.QWidget.keyboardGrabber()).__name__ if QtWidgets.QWidget.keyboardGrabber() else None,
-        "overrideCursor": str(app.overrideCursor().shape()) if app.overrideCursor() else None,
+        "activeModalWidget": type(app.activeModalWidget()).__name__
+        if app.activeModalWidget()
+        else None,
+        "activePopupWidget": type(app.activePopupWidget()).__name__
+        if app.activePopupWidget()
+        else None,
+        "mouseGrabber": type(QtWidgets.QWidget.mouseGrabber()).__name__
+        if QtWidgets.QWidget.mouseGrabber()
+        else None,
+        "keyboardGrabber": type(QtWidgets.QWidget.keyboardGrabber()).__name__
+        if QtWidgets.QWidget.keyboardGrabber()
+        else None,
+        "overrideCursor": str(app.overrideCursor().shape())
+        if app.overrideCursor()
+        else None,
         "mouseButtons": str(app.mouseButtons()),
         "modifiers": str(app.queryKeyboardModifiers()),
         "n_toplevel": len(app.topLevelWidgets()),
-        "n_visible_toplevel": len([w for w in app.topLevelWidgets() if w.isVisible()]),
+        "n_visible_toplevel": len(
+            [w for w in app.topLevelWidgets() if w.isVisible()]
+        ),
         "n_windows": len(gapp.topLevelWindows()),
     }
     # the panes themselves, which is where a missed WA_Disabled would show
-    snap["gl_panes"] = [_widget_row(w) for w in app.allWidgets()
-                        if w.objectName() == "RE_WindowDrawable"]
-    snap["disabled_widgets"] = [_widget_row(w) for w in app.allWidgets()
-                                if w.isVisible() and not w.isEnabled()][:25]
-    snap["disabled_count"] = len([w for w in app.allWidgets()
-                                  if w.isVisible() and not w.isEnabled()])
+    snap["gl_panes"] = [
+        _widget_row(w)
+        for w in app.allWidgets()
+        if w.objectName() == "RE_WindowDrawable"
+    ]
+    snap["disabled_widgets"] = [
+        _widget_row(w)
+        for w in app.allWidgets()
+        if w.isVisible() and not w.isEnabled()
+    ][:25]
+    snap["disabled_count"] = len(
+        [w for w in app.allWidgets() if w.isVisible() and not w.isEnabled()]
+    )
     return snap
 
 
 def baseline():
     snap = capture()
-    with open(_STORE, "w") as fh:
+    with _STORE.open("w") as fh:
         json.dump(snap, fh, indent=1)
     print("baseline saved to %s" % _STORE)
-    print("  %d GL panes, %d disabled visible widgets" %
-          (len(snap["gl_panes"]), snap["disabled_count"]))
+    print(
+        "  %d GL panes, %d disabled visible widgets"
+        % (len(snap["gl_panes"]), snap["disabled_count"])
+    )
     return snap
 
 
@@ -88,17 +110,24 @@ def report():
     now = capture()
     print("=== disabled visible widgets: %d ===" % now["disabled_count"])
     for row in now["disabled_widgets"]:
-        print("   %(cls)s/%(name)s  WA_Disabled=%(WA_Disabled)s  size=%(size)s" % row)
+        print(
+            "   %(cls)s/%(name)s  WA_Disabled=%(WA_Disabled)s  size=%(size)s"
+            % row
+        )
     dead = [g for g in now["gl_panes"] if not g["enabled"] or g["WA_Disabled"]]
     if dead:
-        print("*** FOUND IT: %d Houdini GL pane(s) are disabled ***" % len(dead))
+        print(
+            "*** FOUND IT: %d Houdini GL pane(s) are disabled ***" % len(dead)
+        )
         for row in dead:
             print("   %s" % row)
     else:
-        print("GL panes all enabled and mouse-accepting; the cause is elsewhere.")
+        print(
+            "GL panes all enabled and mouse-accepting; the cause is elsewhere."
+        )
 
-    if os.path.exists(_STORE):
-        with open(_STORE) as fh:
+    if _STORE.exists():
+        with _STORE.open() as fh:
             was = json.load(fh)
         print("=== changed since baseline ===")
         for k in sorted(was):
@@ -111,7 +140,7 @@ def report():
     return now
 
 
-# -- live event trace ---------------------------------------------------------
+###### Live event trace
 # Every reading above is a snapshot, and every snapshot taken during a wedge has read
 # clean. So record the events instead. The one question a snapshot cannot answer:
 # while wedged, does Houdini's own pane widget still RECEIVE a QMouseEvent?
@@ -122,7 +151,7 @@ def report():
 # The log goes to disk as it happens, flushed per line. A wedged session ends in a
 # restart, and the first attempt at this lost the whole trace with it.
 
-TRACE_LOG = os.path.join(tempfile.gettempdir(), "kimodo_wedge_trace.log")
+TRACE_LOG = Path(tempfile.gettempdir()) / "kimodo_wedge_trace.log"
 
 _TRACER = None
 
@@ -160,8 +189,10 @@ class _Tracer(QtCore.QObject):
         self.t0 = QtCore.QDateTime.currentMSecsSinceEpoch()
 
     def write(self, line):
-        self.fh.write("%7d ms  %s\n"
-                      % (QtCore.QDateTime.currentMSecsSinceEpoch() - self.t0, line))
+        self.fh.write(
+            "%7d ms  %s\n"
+            % (QtCore.QDateTime.currentMSecsSinceEpoch() - self.t0, line)
+        )
         self.fh.flush()
 
     def eventFilter(self, obj, ev):
@@ -174,11 +205,19 @@ class _Tracer(QtCore.QObject):
             pop = QtWidgets.QApplication.activePopupWidget()
             # the object id matters: it separates "one event delivered twice" from
             # "two different widgets", and those are different bugs
-            self.write("%-10s %-22s #%012x %-26s panel=%-5s popup=%-10s btn=%-24s at=%s"
-                       % (kind, cls[:22], id(obj), top[:26], inside,
-                          type(pop).__name__ if pop else "-",
-                          str(QtWidgets.QApplication.mouseButtons()),
-                          (QtGui.QCursor.pos().x(), QtGui.QCursor.pos().y())))
+            self.write(
+                "%-10s %-22s #%012x %-26s panel=%-5s popup=%-10s btn=%-24s at=%s"
+                % (
+                    kind,
+                    cls[:22],
+                    id(obj),
+                    top[:26],
+                    inside,
+                    type(pop).__name__ if pop else "-",
+                    str(QtWidgets.QApplication.mouseButtons()),
+                    (QtGui.QCursor.pos().x(), QtGui.QCursor.pos().y()),
+                )
+            )
         return False
 
 
@@ -193,7 +232,8 @@ def trace(on=True):
     if not on:
         print("tracing stopped")
         return
-    _TRACER = _Tracer(io.open(TRACE_LOG, "w", encoding="utf-8"))
+    # The handle is owned by _Tracer and closed by the branch above, not here.
+    _TRACER = _Tracer(TRACE_LOG.open("w", encoding="utf-8"))  # noqa: SIM115
     app.installEventFilter(_TRACER)
     print("tracing to %s" % TRACE_LOG)
     print("call mark('...') to label each step")

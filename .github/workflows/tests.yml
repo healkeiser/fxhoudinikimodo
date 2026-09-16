@@ -1,0 +1,54 @@
+name: Tests
+
+# Neither job needs Houdini. The timeline model is pure Python and the panel
+# conventions are source-level checks, which is the whole point of them: the
+# rules they guard came from bugs that only showed up in a live session, and
+# this is the earliest place they can be caught for free.
+# tests/test_houdini_live.py is excluded by pyproject.toml, not skipped
+# silently; it still has to be run by hand in Houdini.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install ruff
+        run: pip install "ruff>=0.15"
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Formatting
+        run: ruff format --check .
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install pytest
+        run: pip install pytest
+
+      - name: Tests
+        run: pytest -q
