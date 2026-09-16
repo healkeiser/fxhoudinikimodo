@@ -67,7 +67,7 @@ class Timeline:
         return self.segments[index].clamp().frames
 
     def move(self, src: int, dst: int) -> int:
-        """Reorder: take segment ``src`` and drop it so it ends up at index ``dst``."""
+        """Reorder: move segment ``src`` so it ends up at index ``dst``."""
         n = len(self.segments)
         dst = max(0, min(dst, n - 1))
         if src == dst:
@@ -92,7 +92,7 @@ class Timeline:
             keys.remove(frame)
 
     def move_key(self, track: str, old: int, new: int) -> int:
-        """Move a key; if ``new`` is taken the key stays put. Returns the resulting frame."""
+        """Move a key; if ``new`` is taken it stays put. Returns its frame."""
         keys = self.tracks.get(track, [])
         if old not in keys or (new in keys and new != old):
             return old
@@ -145,7 +145,7 @@ class Timeline:
     def from_legacy(
         cls, prompt: str, frames: int, pose_keyframes: str = ""
     ) -> Timeline:
-        """Seed a timeline from the single-prompt parms of a node that never had one."""
+        """Seed a timeline from the single-prompt parms of an older node."""
         tl = cls(segments=[Segment(prompt or "", frames).clamp()])
         for tok in (pose_keyframes or "").replace(",", " ").split():
             with contextlib.suppress(ValueError):

@@ -1,27 +1,29 @@
 """Capture why Houdini's panes stopped answering the mouse.
 
-Symptom: the Kimodo Timeline panel still responds, keyboard shortcuts still work, and
-every Houdini pane ignores the mouse until a restart.
+Symptom: the Kimodo Timeline panel still responds, keyboard shortcuts still
+work, and every Houdini pane ignores the mouse until a restart.
 
-Run this in Houdini's Python Shell. Save a baseline while things work, then run it again
-the moment it wedges; the second run prints the diff:
+Run this in Houdini's Python Shell. Save a baseline while things work, then run
+it again the moment it wedges; the second run prints the diff:
 
     exec(open("scripts/diagnose_input_wedge.py").read())
     baseline()      # while Houdini is healthy
     report()        # when it wedges
 
-Houdini's UI is Qt, so the cause is Qt state. The reading most likely to matter is
-WA_Disabled: Qt implements modality by disabling the widgets a modal dialog blocks and
-clearing the flag on teardown. A teardown that misses one leaves a widget permanently
-disabled with no modal widget left to explain it, which matches the symptom exactly.
+Houdini's UI is Qt, so the cause is Qt state. The reading most likely to matter
+is WA_Disabled: Qt implements modality by disabling the widgets a modal dialog
+blocks and clearing the flag on teardown. A teardown that misses one leaves a
+widget permanently disabled with no modal widget left to explain it, which
+matches the symptom exactly.
 
 Known dead ends, so nobody re-treads them:
-  - hou.updateProgressAndCheckForInterrupt() never raises in this build, inside or
-    outside a real operation. It is not a detector.
-  - activeModalWidget, activePopupWidget, mouseGrabber, keyboardGrabber, overrideCursor
-    and QGuiApplication.modalWindow() all read clean during a wedge.
-  - QDialog.exec() on its own does not cause it; two were run in a live session with no
-    ill effect.
+  - hou.updateProgressAndCheckForInterrupt() never raises in this build,
+      inside or outside a real operation. It is not a detector.
+    - activeModalWidget, activePopupWidget, mouseGrabber, keyboardGrabber,
+      overrideCursor and QGuiApplication.modalWindow() all read clean
+      during a wedge.
+    - QDialog.exec() on its own does not cause it; two were run in a live
+      session with no ill effect.
 """
 
 import json
@@ -141,15 +143,16 @@ def report():
 
 
 ###### Live event trace
-# Every reading above is a snapshot, and every snapshot taken during a wedge has read
-# clean. So record the events instead. The one question a snapshot cannot answer:
-# while wedged, does Houdini's own pane widget still RECEIVE a QMouseEvent?
-#   it does     -> Qt delivery is fine, Houdini's internal dispatch is what broke
+# Every reading above is a snapshot, and every snapshot taken during a
+# wedge has read clean. So record the events instead. The one question a
+# snapshot cannot answer: while wedged, does Houdini's own pane widget
+# still RECEIVE a QMouseEvent?
+#   it does     -> Qt delivery is fine, Houdini's dispatch is what broke
 #   it does not -> something upstream of the pane is eating the event
 # Those two point at different fixes, which is why guessing has not worked.
 #
-# The log goes to disk as it happens, flushed per line. A wedged session ends in a
-# restart, and the first attempt at this lost the whole trace with it.
+# The log goes to disk as it happens, flushed per line. A wedged session
+# ends in a restart, and the first attempt at this lost the trace with it.
 
 TRACE_LOG = Path(tempfile.gettempdir()) / "kimodo_wedge_trace.log"
 
@@ -203,8 +206,8 @@ class _Tracer(QtCore.QObject):
                 return False
             top, inside = _ancestry(obj)
             pop = QtWidgets.QApplication.activePopupWidget()
-            # the object id matters: it separates "one event delivered twice" from
-            # "two different widgets", and those are different bugs
+            # the object id matters: it separates "one event delivered twice"
+            # from "two different widgets", and those are different bugs
             self.write(
                 "%-10s %-22s #%012x %-26s panel=%-5s popup=%-10s btn=%-24s at=%s"
                 % (
@@ -240,7 +243,9 @@ def trace(on=True):
 
 
 def mark(text):
-    """Label the point the trace has reached, so the log reads as steps, not soup."""
+    """Label the point the trace has reached, so the log reads as steps, not
+    soup.
+    """
     if _TRACER is None:
         print("not tracing; call trace() first")
         return

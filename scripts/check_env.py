@@ -9,7 +9,7 @@ import socket
 import subprocess
 import sys
 
-# API port (8001 by default; 8000 is reserved by Docker Desktop on Windows) + text-encoder.
+# API port (8001; 8000 is taken by Docker Desktop on Windows) + text-encoder.
 REQUIRED_PORTS = [int(os.environ.get("KIMODO_PORT", "8001")), 9550]
 RECOMMENDED_RAM_GB = 16
 

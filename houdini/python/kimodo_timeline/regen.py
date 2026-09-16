@@ -1,23 +1,23 @@
 """Regenerate the tail of a generated clip instead of the whole thing.
 
-Kimodo builds a multi-prompt clip one segment at a time, each segment joined to the
-previous by a transition: the previous tail is prepended as observed motion, moved to
-the origin, generated against, then moved back and alpha-blended (see `_multiprompt`
-in kimodo/model/kimodo_model.py).
+Kimodo builds a multi-prompt clip one segment at a time, each segment joined to
+the previous by a transition: the previous tail is prepended as observed motion,
+moved to the origin, generated against, then moved back and alpha-blended (see
+`_multiprompt` in kimodo/model/kimodo_model.py).
 
-A plain /generate always starts with that history empty, so its first segment takes the
-"first motion" path and the transition never runs. Handing the tail over as a world-space
-constraint does not substitute for it: the constrained frames come back accurate to a
-millimetre, but the motion after them continues on its own trajectory, measured 184 cm
-away.
+A plain /generate always starts with that history empty, so its first segment
+takes the "first motion" path and the transition never runs. Handing the tail
+over as a world-space constraint does not substitute for it: the constrained
+frames come back accurate to a millimetre, but the motion after them continues
+on its own trajectory, measured 184 cm away.
 
-So the server takes a `continue_from` tail and seeds that history instead, which makes
-the first requested segment join properly. Measured on a 545-sample clip, the seam moves
-2.18 cm against the clip's own 10.48 cm mean per sample, so the join is smoother than
-ordinary motion.
+So the server takes a `continue_from` tail and seeds that history instead, which
+makes the first requested segment join properly. Measured on a 545-sample clip,
+the seam moves 2.18 cm against the clip's own 10.48 cm mean per sample, so the
+join is smoother than ordinary motion.
 
-The returned clip's head IS the blended seam, so the merge follows the model's own
-convention, old[:cut - n] + new, with no frames dropped.
+The returned clip's head IS the blended seam, so the merge follows the model's
+own convention, old[:cut - n] + new, with no frames dropped.
 
 The pure functions take plain data so they can be tested without Houdini.
 """
@@ -43,17 +43,17 @@ CLIP_KEYS = (
 def cut_sample(
     frames_per_segment, seg_index: int, scene_fps: float, source_fps: float
 ) -> int:
-    """Clip sample where `seg_index` begins. Segment lengths are in scene frames."""
+    """Clip sample where `seg_index` begins. Lengths are in scene frames."""
     scene = sum(int(f) for f in frames_per_segment[:seg_index])
     return int(round(scene * source_fps / scene_fps))
 
 
 def continue_payload(npz, cut: int, n: int) -> dict:
-    """The `n` samples before `cut`, shaped as the server's `continue_from` block.
+    """The `n` samples before `cut`, as the server's `continue_from` block.
 
-    Local rotations rather than global: they are what the motion representation is built
-    from, and the server's 77 -> model-skeleton slice is the exact inverse of the
-    conversion applied on output, so the round trip is lossless.
+    Local rotations rather than global: they are what the motion representation
+    is built from, and the server's 77 -> model-skeleton slice is the exact
+    inverse of the conversion applied on output, so the round trip is lossless.
     """
     if cut < n:
         raise ValueError(
@@ -69,9 +69,10 @@ def continue_payload(npz, cut: int, n: int) -> dict:
 def splice(old, new, cut: int, n: int, resume_at=None) -> dict:
     """Keep `old` up to the transition, then the returned clip whole.
 
-    `new`'s first `n` samples are the blended seam the model produced for those frames,
-    so they replace old[cut - n:cut] rather than being dropped. `resume_at` continues
-    with the rest of the original clip afterwards, for a single-segment replacement.
+    `new`'s first `n` samples are the blended seam the model produced for those
+    frames, so they replace old[cut - n:cut] rather than being dropped.
+    `resume_at` continues with the rest of the original clip afterwards, for a
+    single-segment replacement.
     """
     out = {}
     for k in CLIP_KEYS:
@@ -93,9 +94,9 @@ def seam_jump(merged, at: int) -> float:
 
 
 def mean_step(clip) -> float:
-    """The clip's own mean per-sample joint movement, the scale a seam is judged against.
-    Below 1.0x means the join moves less than the motion around it, which is the point at
-    which it stops reading as a cut.
+    """The clip's own mean per-sample joint movement, the scale a seam is judged
+    against. Below 1.0x means the join moves less than the motion around it,
+    which is the point at which it stops reading as a cut.
     """
     d = np.linalg.norm(np.diff(clip["posed_joints"], axis=0), axis=-1).max(
         axis=1
@@ -104,12 +105,13 @@ def mean_step(clip) -> float:
 
 
 def tail_pin(npz, cut_end: int, n: int, at_index: int) -> list:
-    """Constraints holding the new segment's last `n` frames to the `n` samples before
-    `cut_end`, so whatever follows in the existing clip still joins on.
+    """Constraints holding the new segment's last `n` frames to the `n` samples
+    before `cut_end`, so whatever follows in the existing clip still joins on.
 
-    Indices are segment-relative: the model crops user constraints with current_frame = 0
-    for the first requested segment and prepends the transition afterwards. Full body plus
-    end effectors, the same pairing the model uses for its own transitions.
+    Indices are segment-relative: the model crops user constraints with
+    current_frame = 0 for the first requested segment and prepends the
+    transition afterwards. Full body plus end effectors, the same pairing the
+    model uses for its own transitions.
     """
     head = slice(cut_end - n, cut_end)
     pos = npz["posed_joints"][head].tolist()
@@ -133,12 +135,12 @@ def tail_pin(npz, cut_end: int, n: int, at_index: int) -> list:
 
 
 def samples_for(frames: int, scene_fps: float, source_fps: float) -> int:
-    """Samples the server will generate for a segment: it uses int(duration * fps)."""
+    """Samples the server generates for a segment: it uses int(duration*fps)."""
     return max(1, int(frames / scene_fps * source_fps))
 
 
 def load_npz_bytes(blob: bytes) -> dict:
-    """Read every array out of the archive once; an NpzFile re-decompresses per lookup."""
+    """Read every array out once; an NpzFile re-decompresses per lookup."""
     return dict(np.load(io.BytesIO(blob)))
 
 
@@ -149,19 +151,19 @@ def load_npz_bytes(blob: bytes) -> dict:
 def regenerate(node, seg_index: int, to_end: bool = False):
     """Re-roll segment `seg_index` (0-based), in place.
 
-    By default only that segment: its head is joined with continue_from and its tail is
-    held to the frames the next segment was generated against, so the clip keeps its
-    length and everything either side is untouched. Measured on a 601-sample clip, that
-    leaves the two joins at 0.80x and 0.39x of the clip's own per-sample motion, against
-    31.83x for the tail with no pin.
+    By default only that segment: its head is joined with continue_from and its
+    tail is held to the frames the next segment was generated against, so the
+    clip keeps its length and everything either side is untouched. Measured on a
+    601-sample clip, that leaves the two joins at 0.80x and 0.39x of the clip's
+    own per-sample motion, against 31.83x for the tail with no pin.
 
-    `to_end` re-rolls this segment and every one after it instead, which is what you
-    want when the change should carry through the rest of the clip.
+    `to_end` re-rolls this segment and every one after it instead, which is what
+    you want when the change should carry through the rest of the clip.
 
-    Returns as soon as the job is queued; a JobWatcher on Houdini's event loop finishes
-    the merge when the clip arrives, so Houdini stays interactive throughout. Progress
-    and the final seam measurement land on the node's Status parm, which the Timeline
-    panel displays.
+    Returns as soon as the job is queued; a JobWatcher on Houdini's event loop
+    finishes the merge when the clip arrives, so Houdini stays interactive
+    throughout. Progress and the final seam measurement land on the node's
+    Status parm, which the Timeline panel displays.
     """
     from pathlib import Path
 
@@ -197,8 +199,9 @@ def regenerate(node, seg_index: int, to_end: bool = False):
         np.load(src)
     )  # read the archive once; an NpzFile re-decompresses per lookup
     have = old["posed_joints"].shape[0]
-    # A bounds check is not enough: edited segment lengths still produce an in-range cut,
-    # just the wrong one. Compare what the timeline describes against what is on disk.
+    # A bounds check is not enough: edited segment lengths still produce an
+    # in-range cut, just the wrong one. Compare what the timeline describes
+    # against what is on disk.
     expect = int(round(sum(frames) * source_fps / scene_fps))
     if abs(expect - have) > 2 * n:
         raise ValueError(
@@ -212,8 +215,8 @@ def regenerate(node, seg_index: int, to_end: bool = False):
             % (seg_index + 1)
         )
 
-    # the last segment has nothing after it, so a single re-roll and a run to the end
-    # are the same thing
+    # the last segment has nothing after it, so a single re-roll and a run to
+    # the end are the same thing
     single = not to_end and seg_index + 1 < len(tl.segments)
     send = (
         tl.segments[seg_index : seg_index + 1]
@@ -251,7 +254,7 @@ def regenerate(node, seg_index: int, to_end: bool = False):
     )
 
     def _merge(data, suffix):
-        """Runs on the main thread when the job finishes, from the event-loop callback."""
+        """Runs on the main thread from the event-loop callback when done."""
         blob = requests.get(
             "%s/jobs/%s/download" % (url, job), timeout=180
         ).content

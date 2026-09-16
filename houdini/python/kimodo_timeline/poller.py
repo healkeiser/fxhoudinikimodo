@@ -1,12 +1,14 @@
 """Watch a Kimodo job from Houdini's event loop, without blocking anything.
 
-This is how SideFX's own code does repeated work: hou.ui.addEventLoopCallback runs the
-callback once per event-loop iteration, and hdefereval is built on it. Nothing sleeps on
-the main thread, no nested event loop is entered, no modal dialog is opened and no
-operation scope exists to leak, which is what every earlier version of this got wrong.
+This is how SideFX's own code does repeated work: hou.ui.addEventLoopCallback
+runs the callback once per event-loop iteration, and hdefereval is built on it.
+Nothing sleeps on the main thread, no nested event loop is entered, no modal
+dialog is opened and no operation scope exists to leak, which is what every
+earlier version of this got wrong.
 
-State goes on the node, in `status` and `progress`, which the Timeline panel's own
-progress bar already renders and which show under the node in the network editor.
+State goes on the node, in `status` and `progress`, which the Timeline panel's
+own progress bar already renders and which show under the node in the network
+editor.
 """
 
 from __future__ import annotations
@@ -19,29 +21,31 @@ import requests
 
 from .qt import QtWidgets
 
-POLL_S = 1.0  # seconds between server queries; the callback itself runs far more often
+# Seconds between server queries; the callback itself runs far more often.
+POLL_S = 1.0
 MAX_FAILS = 3
 
 
 class JobDialog(QtWidgets.QDialog):
     """Non-modal progress for a running job, driven by JobWatcher.
 
-    show(), never exec(). A modal nested event loop is what locked Houdini's panes out
-    of the mouse, and none of it was ever needed: this is updated from the watcher's
-    event-loop callback, so Houdini stays fully interactive while it is up, and it
-    appears at once rather than waiting out a minimumDuration or an interrupt threshold.
+    show(), never exec(). A modal nested event loop is what locked Houdini's
+    panes out of the mouse, and none of it was ever needed: this is updated from
+    the watcher's event-loop callback, so Houdini stays fully interactive while
+    it is up, and it appears at once rather than waiting out a minimumDuration
+    or an interrupt threshold.
 
-    Cancel only raises a flag. The watcher does the actual POST on its next tick, so all
-    I/O stays in one place and no button handler blocks.
+    Cancel only raises a flag. The watcher does the actual POST on its next
+    tick, so all I/O stays in one place and no button handler blocks.
     """
 
     def __init__(self, title: str):
         super().__init__(hou.qt.mainWindow())
         self.cancel_requested = False
         self.setWindowTitle(title)
-        # hou.qt.styleSheet is what SideFX's own houpythonportion/qt/Dialog.py calls,
-        # and what fxgui's fxdcc.get_houdini_stylesheet returns. hou.ui.qtStyleSheet is
-        # the same string.
+        # hou.qt.styleSheet is what SideFX's own houpythonportion/qt/Dialog.py
+        # calls, and what fxgui's fxdcc.get_houdini_stylesheet returns.
+        # hou.ui.qtStyleSheet is the same string.
         self.setStyleSheet(hou.qt.styleSheet())
         lay = QtWidgets.QVBoxLayout(self)
         self.label = QtWidgets.QLabel("Queued")
@@ -76,7 +80,7 @@ class JobDialog(QtWidgets.QDialog):
 
 
 class JobWatcher:
-    """Polls one job id and drives the node's parms. `on_done(data)` finishes the work."""
+    """Polls one job id and drives the node's parms. `on_done(data)` ends it."""
 
     def __init__(
         self,
@@ -95,8 +99,8 @@ class JobWatcher:
 
     ###### Lifecycle
     def start(self) -> None:
-        # hou.ui only exists in a UI session, and there is no event loop to poll from
-        # without one. Say so rather than dying on an AttributeError.
+        # hou.ui only exists in a UI session, and there is no event loop to poll
+        # from without one. Say so rather than dying on an AttributeError.
         if not hou.isUIAvailable():
             raise hou.OperationFailed(
                 "Kimodo polls the job from Houdini's event loop, which needs a UI session."
@@ -112,7 +116,8 @@ class JobWatcher:
             hou.ui.removeEventLoopCallback(self._tick)
         if self.dlg is not None:
             self.dlg.close()
-            self.dlg.deleteLater()  # parented to the main window, so it would linger
+            # Parented to the main window, so it would otherwise linger.
+            self.dlg.deleteLater()
             self.dlg = None
 
     def fail(self, msg) -> None:

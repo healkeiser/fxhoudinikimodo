@@ -1,4 +1,5 @@
-"""Kimodo Timeline: a Qt view over model.Timeline, bound to a Kimodo Motion node.
+"""Kimodo Timeline: a Qt view over model.Timeline, bound to a Kimodo Motion
+node.
 
 View controls follow the usual DCC timeline conventions:
   wheel            zoom around the cursor
@@ -45,21 +46,22 @@ TRACK_COLORS = {
 def later(fn, _poll_ms=16):
     """Run fn from the event loop, and only once no mouse button is held.
 
-    Anything that hands control back to Houdini - pressing a node's button, writing
-    parms inside an undo group - should not do it while Qt is still dispatching an
-    event, so this defers to the event loop.
+    Anything that hands control back to Houdini - pressing a node's button,
+    writing parms inside an undo group - should not do it while Qt is still
+    dispatching an event, so this defers to the event loop.
 
-    Waiting for the release on top of that is belt and braces: SideFX document that
-    Houdini "tracks mouse button events globally across all Qt widgets" and that the
-    flag guarding it is re-enabled "on the next mouse button release"
-    (hou.qt.skipClosingMenusForCurrentButtonPress), so running between a real press and
-    its release is asking for trouble.
+    Waiting for the release on top of that is belt and braces: SideFX document
+    that Houdini "tracks mouse button events globally across all Qt widgets" and
+    that the flag guarding it is re-enabled "on the next mouse button release"
+    (hou.qt.skipClosingMenusForCurrentButtonPress), so running between a real
+    press and its release is asking for trouble.
 
-    What it is NOT is the cure for the input wedge, however many commits said so. That
-    was Canvas.mousePressEvent leaking a right-button press into Houdini's own pane while
-    mouseReleaseEvent kept the release, so the pane was left holding a button that never
-    came up. See Canvas.mousePressEvent. Nine attempts blamed the menu and the dialog on
-    the way, which is what theorising instead of tracing the events buys you.
+    What it is NOT is the cure for the input wedge, however many commits said
+    so. That was Canvas.mousePressEvent leaking a right-button press into
+    Houdini's own pane while mouseReleaseEvent kept the release, so the pane was
+    left holding a button that never came up. See Canvas.mousePressEvent. Nine
+    attempts blamed the menu and the dialog on the way, which is what theorising
+    instead of tracing the events buys you.
     """
 
     def go():
@@ -94,7 +96,7 @@ OUTSIDE = QtGui.QColor(0, 0, 0, 60)
 
 
 class PromptDialog(QtWidgets.QDialog):
-    """Prompt plus duration. Frames and seconds are two views of one value, kept in sync."""
+    """Prompt plus duration. Frames and seconds are two views of one value."""
 
     def __init__(self, text: str, frames: int, parent=None):
         super().__init__(parent)
@@ -156,8 +158,9 @@ class PromptDialog(QtWidgets.QDialog):
 
 
 class Canvas(QtWidgets.QWidget):
-    """Ruler + prompt row + one row per track. Emits `edited` after a model change that
-    should be written to the node, `frameRequested` when the ruler is scrubbed."""
+    """Ruler + prompt row + one row per track. Emits `edited` after a model
+    change that should be written to the node, `frameRequested` when the ruler
+    is scrubbed."""
 
     edited = QtCore.Signal(str)  # undo label
     frameRequested = QtCore.Signal(int)
@@ -171,7 +174,7 @@ class Canvas(QtWidgets.QWidget):
         self.start = 1
         self.playhead = 1
         self.hip_range = (1, 1)  # Houdini's playbar range, drawn as bounds
-        # view state: frame at the left edge of the work zone and pixels per frame
+        # view state: leftmost frame of the work zone, and pixels per frame
         self._view_start = 0.0
         self._ppf = 10.0
         self._fitted = False
@@ -188,10 +191,11 @@ class Canvas(QtWidgets.QWidget):
         self._pan_x = 0.0
         self._menu = None  # the open context menu, kept alive
         self.setMouseTracking(True)
-        # Nothing above us is allowed to see our mouse events. This panel is a Python
-        # Panel, so "above us" is Houdini's own pane widget, and a press that reaches it
-        # without its release leaves that pane holding a button forever. The handlers
-        # below consume what they use; this makes it true whatever a later one forgets.
+        # Nothing above us is allowed to see our mouse events. This panel is a
+        # Python Panel, so "above us" is Houdini's own pane widget, and a press
+        # that reaches it without its release leaves that pane holding a button
+        # forever. The handlers below consume what they use; this makes it true
+        # whatever a later one forgets.
         self.setAttribute(QtCore.Qt.WA_NoMousePropagation)
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
         self.setMinimumHeight(RULER_H + PROMPT_H + TRACK_H * len(TRACKS) + 8)
@@ -285,7 +289,7 @@ class Canvas(QtWidgets.QWidget):
         p.fillRect(0, 0, w, h, BG)
         work = QtCore.QRectF(GUTTER, 0, w - GUTTER - PAD_R, h)
 
-        # row backgrounds + labels (labels outside the clip so they never scroll)
+        # row backgrounds + labels (outside the clip so they never scroll)
         p.fillRect(
             QtCore.QRectF(GUTTER, RULER_H, work.width(), PROMPT_H), ROW_BG
         )
@@ -359,7 +363,7 @@ class Canvas(QtWidgets.QWidget):
             p.setPen(GRID)
             p.drawLine(QtCore.QPointF(x, RULER_H), QtCore.QPointF(x, h))
             lab = str(f)
-            # a tick label peeking out from behind the playhead badge reads as a second number
+            # a tick label behind the playhead badge reads as another number
             if not QtCore.QRectF(
                 x + 3, 0, fm.horizontalAdvance(lab), RULER_H
             ).intersects(ph_badge):
@@ -394,7 +398,7 @@ class Canvas(QtWidgets.QWidget):
             p.setPen(QtCore.Qt.NoPen)
             p.setBrush(col)
             p.drawRoundedRect(rr, 5, 5)
-            # edge colour follows the contrast rule, so it stays visible on light blocks
+            # edge colour follows the contrast rule, visible on light blocks
             edge = QtGui.QColor(fg)
             edge.setAlpha(55)
             p.setPen(QtGui.QPen(edge, 1))
@@ -486,9 +490,10 @@ class Canvas(QtWidgets.QWidget):
                 p.setBrush(col)
                 p.drawPath(path)
 
-        # playhead. Blocks and shading treat a frame as the cell [f, f+1), so the current
-        # frame is filled across its whole cell; the line alone marked only its left edge,
-        # which made the end-of-clip shading look a frame late.
+        # playhead. Blocks and shading treat a frame as the cell [f, f+1), so
+        # the current frame is filled across its whole cell; the line alone
+        # marked only its left edge, which made the end-of-clip shading look a
+        # frame late.
         x = self.x_of(self.playhead)
         x_next = self.x_of(self.playhead + 1)
         p.fillRect(
@@ -513,15 +518,17 @@ class Canvas(QtWidgets.QWidget):
             self.setCursor(QtCore.Qt.ClosedHandCursor)
             return
         if ev.button() != QtCore.Qt.LeftButton:
-            # Consume it. THIS is the input wedge, and it has nothing to do with menus.
-            # QWidget.mousePressEvent's default implementation ignores the event, and an
-            # ignored press propagates up the parent chain. In a Python Panel that chain
-            # runs into QOpenGLWidget/RE_WindowDrawable, Houdini's own pane: measured in
-            # a live session, one right-button press arrived at five receivers, ours and
-            # Houdini's. mouseReleaseEvent below consumes every release, so the matching
-            # release never followed it, and Houdini's pane was left holding a button
-            # that is never let go. Afterwards every pane but this one ignores the mouse.
-            # Press and release must consume the same buttons.
+            # Consume it. THIS is the input wedge, and it has nothing to do with
+            # menus. QWidget.mousePressEvent's default implementation ignores
+            # the event, and an ignored press propagates up the parent chain. In
+            # a Python Panel that chain runs into
+            # QOpenGLWidget/RE_WindowDrawable, Houdini's own pane: measured in a
+            # live session, one right-button press arrived at five receivers,
+            # ours and Houdini's. mouseReleaseEvent below consumes every
+            # release, so the matching release never followed it, and Houdini's
+            # pane was left holding a button that is never let go. Afterwards
+            # every pane but this one ignores the mouse. Press and release must
+            # consume the same buttons.
             ev.accept()
             return
         row, track = self._row_of(pos.y())
@@ -659,7 +666,8 @@ class Canvas(QtWidgets.QWidget):
                 self._mode = None
                 later(lambda: self.edit_prompt(i))
         elif row == "track" and pos.x() >= GUTTER:
-            # double-click on a track adds a key at that frame (or removes the one under the cursor)
+            # double-click on a track adds a key at that frame (or removes the
+            # one under the cursor)
             self._mode = None
             k = self._key_at(track, pos.x())
             if k is None:
@@ -670,16 +678,19 @@ class Canvas(QtWidgets.QWidget):
             self.fit()
 
     def contextMenuEvent(self, ev):
-        """Built and run the way fxhoucachemanager does it, which has never wedged Houdini.
+        """Built and run the way fxhoucachemanager does it, which has never
+        wedged Houdini.
 
-        Three things it does differently, kept together because we do not know which one
-        matters:
-          - hou.qt.Menu(), Houdini's own C++ factory (hou.qt._createMenu), so Houdini
-            made the popup and knows it exists. A QtWidgets.QMenu is invisible to it.
-          - exec, and read the chosen action back from it. Nothing is connected to
-            `triggered`, so none of our code runs inside the menu's own event loop.
+        Three things it does differently, kept together because we do not know
+        which one matters:
+          - hou.qt.Menu(), Houdini's own C++ factory (hou.qt._createMenu), so
+            Houdini made the popup and knows it exists. A QtWidgets.QMenu is
+            invisible to it.
+          - exec, and read the chosen action back from it. Nothing is connected
+            to `triggered`, so none of our code runs inside the menu's own loop.
           - the handler runs after exec has returned and that loop has unwound.
-        Held on self as well so an unparented menu outlives the call that made it.
+        Held on self as well so an unparented menu outlives the call that made
+        it.
         """
         pos = QtCore.QPointF(ev.pos())
         row, track = self._row_of(pos.y())
@@ -746,8 +757,9 @@ class Canvas(QtWidgets.QWidget):
             later(chosen)  # and off the stack of this handler too
 
     def _scrub_to(self, x):
-        """Move our own playhead and repaint straight away, then ask Houdini to follow.
-        Waiting for the 400 ms tick to pick the frame up is what made dragging feel dead."""
+        """Move our own playhead and repaint straight away, then ask Houdini to
+        follow. Waiting for the 400 ms tick to pick the frame up is what made
+        dragging feel dead."""
         f = self.frame_at(x)
         if f != self.playhead:
             self.playhead = f
@@ -756,21 +768,23 @@ class Canvas(QtWidgets.QWidget):
 
     ###### Model edits (each ends in one undoable write)
     def _ask(self, prompt, frames, then):
-        """Show the segment dialog and call `then(text, frames)` if it is accepted.
+        """Show the segment dialog and call `then(text, frames)` if it is
+        accepted.
 
-        No event loop of our own, and that is the whole point. A nested Qt event loop
-        opened inside Houdini's UI pump leaves every native mouse message delivered to
-        Houdini's panes twice: press, press, release, release, so their press/release
-        pairing never rebalances and every pane except this one stops answering the
-        mouse until a restart. Measured in a live session, traced event by event. A
-        hand-rolled `while visible: processEvents()` pump is the same hazard as exec(),
-        it just spells it differently, so the only safe answer is not to wait at all:
-        show the dialog and continue from `finished`.
+        No event loop of our own, and that is the whole point. A nested Qt event
+        loop opened inside Houdini's UI pump leaves every native mouse message
+        delivered to Houdini's panes twice: press, press, release, release, so
+        their press/release pairing never rebalances and every pane except this
+        one stops answering the mouse until a restart. Measured in a live
+        session, traced event by event. A hand-rolled `while visible:
+        processEvents()` pump is the same hazard as exec(), it just spells it
+        differently, so the only safe answer is not to wait at all: show the
+        dialog and continue from `finished`.
 
-        Parented to Houdini's main window so it picks up Houdini's stylesheet, which
-        would also make Houdini keep it alive after it closes; WA_DeleteOnClose ends it.
-        `finished` is emitted before the deferred delete runs, so reading the widgets
-        from the slot is safe.
+        Parented to Houdini's main window so it picks up Houdini's stylesheet,
+        which would also make Houdini keep it alive after it closes;
+        WA_DeleteOnClose ends it. `finished` is emitted before the deferred
+        delete runs, so reading the widgets from the slot is safe.
         """
         dlg = PromptDialog(prompt, frames, hou.qt.mainWindow())
         dlg.setAttribute(QtCore.Qt.WA_DeleteOnClose)
@@ -786,7 +800,7 @@ class Canvas(QtWidgets.QWidget):
         seg = self.tl.segments[i]
 
         def apply(text, frames):
-            # the panel stays live while the dialog is open, so the segment can be gone
+            # the panel stays live, so the segment may be gone by now
             if i >= len(self.tl.segments):
                 return
             self.tl.set_prompt(i, text)
@@ -805,7 +819,7 @@ class Canvas(QtWidgets.QWidget):
         )
 
         def apply(text, frames):
-            # same as edit_prompt: the timeline can have moved on while the dialog was up
+            # same as edit_prompt: the timeline may have moved on meanwhile
             at = (
                 after
                 if after is not None and after < len(self.tl.segments)
@@ -846,7 +860,9 @@ class Canvas(QtWidgets.QWidget):
 
 
 class TimelineWidget(QtWidgets.QWidget):
-    """The panel: header (node), canvas, footer (transition, total, Fit, Generate, Status)."""
+    """The panel: header (node), canvas, footer (transition, total, Fit,
+    Generate, Status).
+    """
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -880,16 +896,17 @@ class TimelineWidget(QtWidgets.QWidget):
             "Double-click: edit prompt + length \u00b7 Right-click: add / split / delete"
         )
         self.canvas.edited.connect(self._write)
-        # Queued, not direct. Run synchronously, both of these re-enter Houdini from
-        # inside a Qt event handler: set_frame calls hou.ui.triggerUpdate from
-        # Canvas.mouseMoveEvent on every scrub step, and _regen opens a modal progress
-        # dialog while the context menu's own exec() loop is still on the stack.
-        # Re-entering Houdini's UI cycle mid-dispatch leaves it routing mouse input to
-        # whichever pane was active at re-entry, so every pane except this one stops
-        # answering the mouse until something forces a pane focus change. A queued
-        # connection runs the slot from the event loop once the handler has returned.
-        # Scrubbing still reads as immediate because _scrub_to moves the canvas's own
-        # playhead before it emits.
+        # Queued, not direct. Run synchronously, both of these re-enter Houdini
+        # from inside a Qt event handler: set_frame calls hou.ui.triggerUpdate
+        # from Canvas.mouseMoveEvent on every scrub step, and _regen opens a
+        # modal progress dialog while the context menu's own exec() loop is
+        # still on the stack. Re-entering Houdini's UI cycle mid-dispatch leaves
+        # it routing mouse input to whichever pane was active at re-entry, so
+        # every pane except this one stops answering the mouse until something
+        # forces a pane focus change. A queued connection runs the slot from the
+        # event loop once the handler has returned. Scrubbing still reads as
+        # immediate because _scrub_to moves the canvas's own playhead before it
+        # emits.
         self.canvas.frameRequested.connect(
             bridge.set_frame, QtCore.Qt.QueuedConnection
         )
@@ -951,9 +968,10 @@ class TimelineWidget(QtWidgets.QWidget):
         foot.addWidget(self.progress)
         self.status_label = QtWidgets.QLabel("")
         self.status_label.setStyleSheet("color: #9a9a9a")
-        # Status carries server errors verbatim, which can be a paragraph. Left to size
-        # itself the label widens the footer and drags the whole panel out with it, so
-        # cap it, let it shrink below its hint, and keep the full text in the tooltip.
+        # Status carries server errors verbatim, which can be a paragraph. Left
+        # to size itself the label widens the footer and drags the whole panel
+        # out with it, so cap it, let it shrink below its hint, and keep the
+        # full text in the tooltip.
         self.status_label.setMaximumWidth(STATUS_W)
         self.status_label.setMinimumWidth(0)
         self.status_label.setSizePolicy(
@@ -971,8 +989,9 @@ class TimelineWidget(QtWidgets.QWidget):
         self.gen_btn = QtWidgets.QPushButton("Generate")
         self.gen_btn.setDefault(True)
         # No stylesheet here: any stylesheet on a QPushButton hands rendering to
-        # QStyleSheetStyle, which draws the CSS box model and drops Houdini's native
-        # button background. Get bold and width the native way so the chrome survives.
+        # QStyleSheetStyle, which draws the CSS box model and drops Houdini's
+        # native button background. Get bold and width the native way so the
+        # chrome survives.
         _f = self.gen_btn.font()
         _f.setBold(True)
         self.gen_btn.setFont(_f)
@@ -985,8 +1004,8 @@ class TimelineWidget(QtWidgets.QWidget):
         self._timer.setInterval(400)
         self._timer.timeout.connect(self._tick)
         self._timer.start()
-        # The 400 ms tick is too coarse to follow playback, and running the whole tick at
-        # frame rate would be wasteful. A second timer moves only the playhead.
+        # The 400 ms tick is too coarse for playback, and the whole tick at
+        # frame rate would be wasteful. A second timer moves the playhead.
         self._play_timer = QtCore.QTimer(self)
         self._play_timer.setInterval(33)
         self._play_timer.timeout.connect(self._sync_playhead)
@@ -994,7 +1013,7 @@ class TimelineWidget(QtWidgets.QWidget):
         self._tick()
 
     def _set_status(self, text):
-        """Show `text` elided to STATUS_W, with the whole thing in the tooltip."""
+        """Show `text` elided to STATUS_W, with the full text in the tooltip."""
         text = text or ""
         if text == self._status_text:
             return  # runs on the 400 ms tick; do not re-elide constantly
@@ -1007,7 +1026,7 @@ class TimelineWidget(QtWidgets.QWidget):
         )
 
     def _sync_playhead(self):
-        """Follow the Houdini frame at ~30 fps. One HOM call, repaint only on a change."""
+        """Track the Houdini frame at ~30 fps. One HOM call, repaint on move."""
         if self.node is None or not self.isVisible():
             return
         try:
@@ -1044,8 +1063,9 @@ class TimelineWidget(QtWidgets.QWidget):
             return
         try:
             self._sync_combo()
-            # Only a *new* network-editor selection switches the panel, so a pick made
-            # in the combo stands and either Kimodo node can be driven from this panel.
+            # Only a *new* network-editor selection switches the panel, so a
+            # pick made in the combo stands and either Kimodo node can be driven
+            # from this panel.
             sel = bridge.find_node()
             sel_path = sel.path() if sel is not None else None
             if sel_path is not None and sel_path != self._last_selected:
@@ -1076,9 +1096,10 @@ class TimelineWidget(QtWidgets.QWidget):
         ):
             w.setEnabled(enabled)
         if not enabled:
-            # The node was deleted, or the scene was replaced. Disabling the widgets is
-            # not enough: the canvas would go on painting the dead node's segments.
-            # Guarded so this costs nothing on the ticks after the first.
+            # The node was deleted, or the scene was replaced. Disabling the
+            # widgets is not enough: the canvas would go on painting the dead
+            # node's segments. Guarded so this costs nothing on the ticks after
+            # the first.
             self.warn_label.setText("")
             self._set_status("")
             self.total_label.setText("")
@@ -1108,7 +1129,7 @@ class TimelineWidget(QtWidgets.QWidget):
             self.node_combo.blockSignals(True)
             self.node_combo.setCurrentIndex(i)
             self.node_combo.blockSignals(False)
-        # Pose keys need a posed rig on input 1; say so before Generate has to refuse.
+        # Pose keys need a posed rig on input 1; say so before Generate refuses.
         has_keys = any(self.canvas.tl.tracks.values())
         self.warn_label.setText(
             "\u26a0 pose keys need a posed skeleton on input 1 (Create Pose Rig)"
@@ -1159,9 +1180,10 @@ class TimelineWidget(QtWidgets.QWidget):
         self.canvas.update()
 
     def _regen(self, index, to_end=False):
-        """Re-roll a segment, keeping what came before and, unless `to_end`, what comes
-        after. Returns as soon as the job is queued; the merge happens on Houdini's event
-        loop. Imported lazily: it needs numpy, and the rest of the panel does not."""
+        """Re-roll a segment, keeping what came before and, unless `to_end`,
+        what comes after. Returns as soon as the job is queued; the merge
+        happens on Houdini's event loop. Imported lazily: it needs numpy, and
+        the rest of the panel does not."""
         if self.node is None:
             return
         self._write("Kimodo timeline: regenerate")

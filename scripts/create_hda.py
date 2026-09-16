@@ -4,7 +4,8 @@ Create the vb::kimodo_motion HDA via hython (no GUI needed).
 Usage:
     hython scripts/create_hda.py [npz_default]
 
-Output: vb_kimodo_motion_1.1.hda in the repo root (packed; _add_help.py expands it into houdini/otls/).
+Output: vb_kimodo_motion_1.1.hda in the repo root (packed; _add_help.py expands
+it into houdini/otls/).
 """
 
 import re
@@ -22,13 +23,14 @@ _REPO = _HERE.parent
 _SKIN_BGEO = _REPO / "skin.bgeo.sc"
 _APOSE_BGEO = _REPO / "apose.bgeo.sc"
 
-# Kimodo SOMA models generate at this rate; exposed as the Source FPS parm default.
+# Kimodo SOMA models generate at this rate; the Source FPS parm defaults to it.
 _KIMODO_FPS = 30
 
 # Node icon (embedded into the HDA as its IconSVG section).
 _ICON_SVG = _HERE / "kimodo_icon.svg"
 
-# Node type is <namespace>::kimodo_motion::<version>; bump _VERSION for breaking UI changes.
+# Node type is <namespace>::kimodo_motion::<version>; bump _VERSION for
+# a breaking UI change.
 _NAMESPACE = "vb"
 _VERSION = "1.1"
 # Library file/dir name, derived from the type name the way Houdini does it.
@@ -51,14 +53,15 @@ def _skin_sections():
 
 _NPZ_DEFAULT = sys.argv[1] if len(sys.argv) > 1 else ""
 
-# The SOMA77 skeleton data (joints, parents, neutral pose, T-pose rotations) is the
-# single source of truth in scripts/_soma77.py; it is embedded verbatim as the HDA's
-# PythonModule section and read by each cook script via hou.pwd().parent().type().hdaModule().
+# The SOMA77 skeleton data (joints, parents, neutral pose, T-pose rotations) is
+# the single source of truth in scripts/_soma77.py; it is embedded verbatim as
+# the HDA's PythonModule section and read by each cook script via
+# hou.pwd().parent().type().hdaModule().
 _MODULE_SRC = (_HERE / "_soma77.py").read_text(encoding="utf-8")
 
-# Segment multiparm <-> timeline_json. The JSON stays canonical because it also holds
-# the pose-key tracks, which have no sensible multiparm form; the multiparm is a real
-# editor over the segments that writes back.
+# Segment multiparm <-> timeline_json. The JSON stays canonical because it also
+# holds the pose-key tracks, which have no sensible multiparm form; the
+# multiparm is a real editor over the segments that writes back.
 _MODULE_SRC += '''
 
 import json as _json
@@ -618,9 +621,10 @@ node.parm("status").set(msg)
 hou.ui.setStatusMessage("Kimodo: " + msg, severity=sev)
 """
 
-# Build a standalone A-pose rig to pose for full-body / end-effector constraints.
-# It loads the HDA's embedded apose section by *type name*, so it's independent of this
-# node's outputs - no output-into-its-own-input loop. Wired into input 1 ready to pose.
+# Build a standalone A-pose rig to pose for full-body / end-effector
+# constraints. It loads the HDA's embedded apose section by *type name*, so it's
+# independent of this node's outputs - no output-into-its-own-input loop. Wired
+# into input 1 ready to pose.
 _MAKE_RIG_CB = r"""
 import hou
 
@@ -718,8 +722,8 @@ finally:
         pass
 """
 
-# Open Timeline: focus an existing Kimodo Timeline pane tab or float a new one, and select
-# this node so the panel picks it up.
+# Open Timeline: focus an existing Kimodo Timeline pane tab or float a new one,
+# and select this node so the panel picks it up.
 _OPEN_TIMELINE_CB = r"""
 import hou
 node = kwargs["node"]
@@ -824,9 +828,10 @@ _PROMPT_HELP = (
 def build_hda(node_name, description, hda_path, generate_cb):
     """Build the kimodo_motion HDA.
 
-    Output order follows SideFX's character/test-geometry nodes so a Joint Deform wires
-    straight across (0 -> 0, 1 -> 1, 2 -> 2):
-      0 Rest Geometry (skin mesh)   1 Capture Pose (A-pose)   2 Animated Pose   3 T-Pose
+    Output order follows SideFX's character/test-geometry nodes so a Joint
+    Deform wires straight across (0 -> 0, 1 -> 1, 2 -> 2):
+      0 Rest Geometry (skin mesh)   1 Capture Pose (A-pose)
+      2 Animated Pose               3 T-Pose
     """
     skin_sections = _skin_sections()  # {section_name: bytes} from build_skin.py
     obj = hou.node("/obj")
@@ -842,9 +847,10 @@ def build_hda(node_name, description, hda_path, generate_cb):
     tpose_sop = subnet.createNode("python", "tpose_sop")
     tpose_sop.parm("python").set(_REST_SCRIPT)
 
-    # Houdini takes each output connector's colour from its internal Output SOP, so these
-    # match kinefx::characterio::2.0 and read the same way in the network editor.
-    # Index 1 (Capture Pose) is SideFX's default grey, so it is left alone.
+    # Houdini takes each output connector's colour from its internal Output SOP,
+    # so these match kinefx::characterio::2.0 and read the same way in the
+    # network editor. Index 1 (Capture Pose) is SideFX's default grey, so it is
+    # left alone.
     OUT_COLORS = {
         0: (0.584, 0.776, 1.0),  # Rest Geometry  - light blue
         2: (0.976, 0.780, 0.263),
@@ -872,8 +878,8 @@ def build_hda(node_name, description, hda_path, generate_cb):
     first.setRenderFlag(True)
     subnet.layoutChildren()
 
-    # createDigitalAsset appends to an existing library file; start clean so the packed
-    # file holds exactly one definition (the one _add_help.py picks up).
+    # createDigitalAsset appends to an existing library file; start clean so the
+    # packed file holds exactly one definition (the one _add_help.py picks up).
     if hda_path.exists():
         hda_path.unlink()
     hda_node = subnet.createDigitalAsset(
@@ -882,13 +888,15 @@ def build_hda(node_name, description, hda_path, generate_cb):
         hda_file_name=str(hda_path),
         description=description,
         min_num_inputs=0,
-        max_num_inputs=2,  # input 0: geometry -> root2d; input 1: posed skeleton -> fullbody/EE
+        # input 0: geometry -> root2d. input 1: posed skeleton -> fullbody/EE.
+        max_num_inputs=2,
         version=_VERSION,
     )
     hda_def = hda_node.type().definition()
     hda_def.setMaxNumOutputs(len(labels))
-    # Node icon: the SVG in scripts/kimodo_icon.svg, embedded as the IconSVG section.
-    # Namespaced opdef form: opdef:/<namespace>::Sop/<name>::<version>?IconSVG
+    # Node icon: the SVG in scripts/kimodo_icon.svg, embedded as the IconSVG
+    # section. Namespaced opdef form:
+    # opdef:/<namespace>::Sop/<name>::<version>?IconSVG
     scope, ns, base, ver = hda_node.type().nameComponents()
     icon_path = "opdef:/%sSop/%s%s?IconSVG" % (
         ns + "::" if ns else "",
@@ -902,7 +910,8 @@ def build_hda(node_name, description, hda_path, generate_cb):
     )  # SOMA77 data for the cook scripts
     hda_def.addSection("OnCreated", _ON_CREATED)
     hda_def.setExtraFileOption("OnCreated/IsPython", True)
-    # Shown under the node in the network editor (Type Properties > Node > Descriptive Parm).
+    # Shown under the node in the network editor (Type Properties > Node >
+    # Descriptive Parm).
     hda_def.addSection("DescriptiveParmName", "status")
     # Store the binary bgeo as base64 text so the section round-trips cleanly
     # (HDASection.contents() returns str; raw bytes don't survive that).
@@ -924,7 +933,8 @@ def build_hda(node_name, description, hda_path, generate_cb):
 
     ###### Parameter interface
     ptg = hou.ParmTemplateGroup()  # start fresh - no inherited subnet parms
-    timeline_owns = "{ has_timeline == 1 }"  # the Timeline panel drives these while it has data
+    # The Timeline panel drives these while it has data.
+    timeline_owns = "{ has_timeline == 1 }"
 
     # Tab: Generate - the everyday controls.
     gen = hou.FolderParmTemplate(
@@ -1041,7 +1051,7 @@ def build_hda(node_name, description, hda_path, generate_cb):
             "seg_range#",
             "Frames",
             join_with_next=True,
-            # same sixteen-column trick as Status: one wide column would centre the text
+            # sixteen columns like Status: one wide column centres the text
             column_labels=(
                 '`chs("seg_from#")` - `chs("seg_to#")`   '
                 '(`rint(ch("seg_frames#") / ch("scene_fps") * 100) / 100` s)',
@@ -1134,7 +1144,8 @@ def build_hda(node_name, description, hda_path, generate_cb):
     )
     gen.addParmTemplate(
         hou.StringParmTemplate(
-            # Read by the Timeline panel, and shown under the node via DescriptiveParmName.
+            # Read by the Timeline panel, and shown under the node via
+            # DescriptiveParmName.
             "status",
             "Status",
             1,
@@ -1170,7 +1181,8 @@ def build_hda(node_name, description, hda_path, generate_cb):
     con = hou.FolderParmTemplate(
         "fld_constraints", "Constraints", folder_type=hou.folderType.Tabs
     )
-    # Collapsible groups instead of separators; group_default 1 = open, 0 = closed on creation.
+    # Collapsible groups instead of separators; group_default 1 = open, 0 =
+    # closed on creation.
     path = hou.FolderParmTemplate(
         "grp_path",
         "Root Path (input 0)",
@@ -1420,13 +1432,15 @@ def build_hda(node_name, description, hda_path, generate_cb):
             "job_id", "Job ID", 1, default_value=("",), is_hidden=True
         )
     )
-    # Last failure message; the cook raises it as a node error. Cleared when Generate starts.
+    # Last failure message; the cook raises it as a node error. Cleared
+    # when Generate starts.
     ptg.append(
         hou.StringParmTemplate(
             "last_error", "Last Error", 1, default_value=("",), is_hidden=True
         )
     )
-    # 0..1 while a job runs (server-reported denoising progress); the Timeline panel draws it.
+    # 0..1 while a job runs, from the server's denoising progress. The
+    # Timeline panel draws it.
     ptg.append(
         hou.FloatParmTemplate(
             "progress",
@@ -1438,8 +1452,9 @@ def build_hda(node_name, description, hda_path, generate_cb):
             is_hidden=True,
         )
     )
-    # Root path canonicalisation written by Generate: (origin x, origin z, heading angle). The
-    # cook applies the inverse so the generated motion lands on the authored curve.
+    # Root path canonicalisation written by Generate: (origin x, origin z,
+    # heading angle). The cook applies the inverse so the generated motion lands
+    # on the authored curve.
     ptg.append(
         hou.FloatParmTemplate(
             "path_xform",
@@ -1459,8 +1474,8 @@ def build_hda(node_name, description, hda_path, generate_cb):
             tags={"editor": "1"},
         )
     )
-    # Mirror of "timeline_json is non-empty" for disablewhen rules (a JSON blob is not a
-    # value the conditional parser can compare against).
+    # Mirror of "timeline_json is non-empty" for disablewhen rules (a JSON blob
+    # is not a value the conditional parser can compare against).
     ptg.append(
         hou.ToggleParmTemplate(
             "has_timeline", "Has Timeline", default_value=False, is_hidden=True
@@ -1497,8 +1512,8 @@ def build_hda(node_name, description, hda_path, generate_cb):
         return line
 
     ds = [_relabel(line) for line in ds]
-    # A multiparm's count has no min/max in HOM; clamp it in the DialogScript so the
-    # Segments block cannot be emptied to zero.
+    # A multiparm's count has no min/max in HOM; clamp it in the DialogScript so
+    # the Segments block cannot be emptied to zero.
     for i, line in enumerate(ds):
         if line.strip() == 'name    "segments"':
             for j in range(i, min(i + 6, len(ds))):
@@ -1528,5 +1543,5 @@ def build_hda(node_name, description, hda_path, generate_cb):
     )
 
 
-# At module scope on purpose: `hython scripts/create_hda.py` is the whole interface.
+# At module scope on purpose: `hython scripts/create_hda.py` is the interface.
 build_hda("kimodo_motion", "Kimodo Motion Generator", _HDA_PATH, _GENERATE_CB)

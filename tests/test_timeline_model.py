@@ -1,4 +1,6 @@
-"""Checks for kimodo_timeline.model. Plain python: python tests/test_timeline_model.py"""
+"""Checks for kimodo_timeline.model. Plain python: python
+tests/test_timeline_model.py
+"""
 
 import sys
 from pathlib import Path

@@ -39,10 +39,10 @@ _model_lock = asyncio.Lock()
 
 def _ensure_model(name: str):
     """Load (or reuse) the resident Kimodo model. The cache key is the resolved
-    canonical model name, so aliases (e.g. an empty preload default and the HDA's
-    "Kimodo-SOMA-RP-v1.1") map to the same key and reuse the loaded model instead
-    of reloading. Single slot: a different model replaces the previous one to
-    bound VRAM to one model at a time."""
+    canonical model name, so aliases (e.g. an empty preload default and the
+    HDA's "Kimodo-SOMA-RP-v1.1") map to the same key and reuse the loaded model
+    instead of reloading. Single slot: a different model replaces the previous
+    one to bound VRAM to one model at a time."""
     global _model, _model_key
     import torch
     from kimodo import load_model
@@ -62,11 +62,13 @@ def _ensure_model(name: str):
 
 
 def _build_initial_motion(cf, model):
-    """Motion features for `continue_from`, so the first segment continues rather than starts.
+    """Motion features for `continue_from`, so the first segment continues
+    rather than starts.
 
-    The NPZ carries 77-joint local rotations; the model works on its own smaller skeleton,
-    and `from_SOMASkeleton77` is the exact inverse of the conversion used on output, so the
-    round-trip is lossless. Root positions are skeleton independent.
+    The NPZ carries 77-joint local rotations; the model works on its own smaller
+    skeleton, and `from_SOMASkeleton77` is the exact inverse of the conversion
+    used on output, so the round-trip is lossless. Root positions are skeleton
+    independent.
     """
     if not cf:
         return None
@@ -90,12 +92,13 @@ def _build_initial_motion(cf, model):
 def _build_constraints(constraints, model) -> list:
     """Turn the request's constraint dicts into Kimodo constraint objects.
 
-    Standard Kimodo dicts (root2d / fullbody / end-effector with local axis-angle)
-    go through load_constraints_lst. The bridge also accepts two "global" dict types
-    authored from posed Houdini geometry \u2014 `fullbody-global` and `ee-global` \u2014 which
-    carry global joint positions + rotation matrices and are built via the constraint
-    constructors directly (the path Kimodo's own demo uses), avoiding any local /
-    rest-pose convention round-trip on the client side."""
+    Standard Kimodo dicts (root2d / fullbody / end-effector with local
+    axis-angle) go through load_constraints_lst. The bridge also accepts two
+    "global" dict types authored from posed Houdini geometry, the
+    `fullbody-global` and `ee-global` types. They carry global joint
+    positions and rotation matrices, built via the constraint constructors
+    (the path Kimodo's own demo uses), avoiding any local / rest-pose convention
+    round-trip on the client side."""
     if not constraints:
         return []
     import torch
@@ -107,9 +110,10 @@ def _build_constraints(constraints, model) -> list:
 
     skeleton = model.skeleton
     device = skeleton.device
-    # The HDA sends SOMA77 (77-joint) global data, but a SOMA-RP model constrains on
-    # its smaller model skeleton (e.g. SOMASkeleton30). Map 77 -> the model joint set/
-    # order the same way Kimodo's demo does (get_skel_slice against the 77 skeleton).
+    # The HDA sends SOMA77 (77-joint) global data, but a SOMA-RP model
+    # constrains on its smaller model skeleton (e.g. SOMASkeleton30). Map 77 ->
+    # the model joint set/ order the same way Kimodo's demo does (get_skel_slice
+    # against the 77 skeleton).
     src77 = getattr(skeleton, "somaskel77", None)
     skel_slice = (
         skeleton.get_skel_slice(src77)
@@ -155,11 +159,11 @@ def _build_constraints(constraints, model) -> list:
 
 class _Progress:
     """Stand-in for tqdm: Kimodo wraps one denoising loop per segment with
-    progress_bar(indices). Measured on the resident server, a segment costs roughly
-    30 s of text encoding (CPU), ~8 s of denoising (GPU) and a few seconds of
-    post-processing, so the fraction is (finished loops + position in the current
-    loop) / segments, and `phase` says which of the three stages is running. Capped
-    below 1 until the NPZ is written."""
+    progress_bar(indices). Measured on the resident server, a segment costs
+    roughly 30 s of text encoding (CPU), ~8 s of denoising (GPU) and a few
+    seconds of post-processing, so the fraction is (finished loops + position in
+    the current loop) / segments, and `phase` says which of the three stages is
+    running. Capped below 1 until the NPZ is written."""
 
     def __init__(self, job: dict, expected_loops: int):
         self.job, self.expected, self.done_loops = (
@@ -203,7 +207,7 @@ class _Progress:
 def _infer_resident(
     req: GenerateRequest, out_path: Path, job: Optional[dict] = None
 ) -> None:
-    """Blocking in-process inference. Mirrors kimodo/scripts/generate.py main()."""
+    """Blocking in-process inference. Mirrors kimodo/scripts/generate.py."""
     from kimodo.exports.motion_io import save_kimodo_npz
 
     model = _ensure_model(req.model)
@@ -214,9 +218,10 @@ def _infer_resident(
     progress = _Progress(
         job if job is not None else {}, expected_loops=len(texts)
     )
-    # Kimodo's multi-prompt path does not forward `progress_bar` to the sampling loop
-    # (kimodo_model._multiprompt calls self._generate without it), so inject it there.
-    # Inference is serialised by _model_lock, so patching the resident model is safe.
+    # Kimodo's multi-prompt path does not forward `progress_bar` to the sampling
+    # loop (kimodo_model._multiprompt calls self._generate without it), so
+    # inject it there. Inference is serialised by _model_lock, so patching the
+    # resident model is safe.
     orig_generate = model._generate
 
     def _generate_with_progress(*a, **k):
@@ -268,17 +273,19 @@ class GenerateRequest(BaseModel):
     duration: float = 3.0
     model: str = "soma-rp"
     force: bool = False  # bypass the cache and re-run inference
-    # Continue an existing clip instead of starting fresh. Carries the tail of a clip
-    # you already have as {"local_rot_mats": [n,77,3,3], "root_positions": [n,3]}; the
-    # first requested segment then takes Kimodo's transition path and joins onto it,
-    # and the returned NPZ is the new tail only (its first frames are the blended seam).
+    # Continue an existing clip instead of starting fresh. Carries the tail of a
+    # clip you already have as {"local_rot_mats": [n,77,3,3], "root_positions":
+    # [n,3]}; the first requested segment then takes Kimodo's transition path
+    # and joins onto it, and the returned NPZ is the new tail only (its first
+    # frames are the blended seam).
     continue_from: Optional[dict] = None
     constraints: Optional[list] = (
         None  # Kimodo constraint dicts (type/frame_indices/...)
     )
-    # Multi-prompt timeline: ordered segments [{"prompt": str, "duration": seconds}, ...].
-    # When given, `prompt`/`duration` are ignored and Kimodo blends consecutive segments
-    # over `transition_frames` clip samples at each boundary.
+    # Multi-prompt timeline: ordered segments [{"prompt": str, "duration":
+    # seconds}, ...]. When given, `prompt`/`duration` are ignored and Kimodo
+    # blends consecutive segments over `transition_frames` clip samples at each
+    # boundary.
     segments: Optional[list] = None
     transition_frames: int = 5
 
@@ -315,8 +322,8 @@ class JobStatus(BaseModel):
 
 
 def _cache_key(req: GenerateRequest) -> str:
-    """Identical requests share one NPZ. Single-prompt keys are unchanged from before the
-    timeline existed; segment requests add their own fields."""
+    """Identical requests share one NPZ. Single-prompt keys are unchanged from
+    before the timeline existed; segment requests add their own fields."""
     payload = {
         "prompt": req.prompt,
         "duration": req.duration,
@@ -384,25 +391,28 @@ async def generate(req: GenerateRequest) -> JobStatus:
     return JobStatus(job_id=job_id, status="queued", prompt=desc)
 
 
-# Only the denoising loop reports progress, and on CPU it is the short part of a segment:
-# roughly 30 s of text encoding against ~8 s of denoising. Without this the bar jumps a
-# whole segment then sits still. The creep is an estimate from elapsed time, capped short
-# of the next real milestone so it never overtakes the truth.
+# Only the denoising loop reports progress, and on CPU it is the short part of a
+# segment: roughly 30 s of text encoding against ~8 s of denoising. Without this
+# the bar jumps a whole segment then sits still. The creep is an estimate from
+# elapsed time, capped short of the next real milestone so it never overtakes
+# the truth.
 #
-# 30 s is the measured CPU figure and only a bootstrap: _encode_est_seen below replaces it
-# with a real measurement after the first encode. Until then it can be wrong in two ways.
-# Too high and the creep never gets going, which is what TEXT_ENCODER_DEVICE=cuda does, where
-# encoding all but disappears and the bar behaves as it did before the creep existed. Too low
-# is the worse direction: the ramp hits its ceiling early and sits there, the symptom this
-# exists to fix. The encoder is a separate container, so the server cannot see which device
-# it is on; hence an estimate rather than a branch.
+# 30 s is the measured CPU figure and only a bootstrap: _encode_est_seen below
+# replaces it with a real measurement after the first encode. Until then it can
+# be wrong in two ways. Too high and the creep never gets going, which is what
+# TEXT_ENCODER_DEVICE=cuda does, where encoding all but disappears and the bar
+# behaves as it did before the creep existed. Too low is the worse direction:
+# the ramp hits its ceiling early and sits there, the symptom this exists to
+# fix. The encoder is a separate container, so the server cannot see which
+# device it is on; hence an estimate rather than a branch.
 _ENCODE_EST_S = max(0.1, float(os.environ.get("KIMODO_ENCODE_EST_S", "30")))
 
-# What an encode actually took, the last time one finished on this server. It replaces the
-# estimate above as soon as there is one, and it deliberately survives the job that measured
-# it: a partial regeneration sends a single segment, so it has no earlier segment of its own
-# to learn from, and by then a full Generate has usually already run. A plain float written by
-# the inference thread and read by the event loop, so no lock.
+# What an encode actually took, the last time one finished on this server. It
+# replaces the estimate above as soon as there is one, and it deliberately
+# survives the job that measured it: a partial regeneration sends a single
+# segment, so it has no earlier segment of its own to learn from, and by then a
+# full Generate has usually already run. A plain float written by the inference
+# thread and read by the event loop, so no lock.
 _encode_est_seen: Optional[float] = None
 
 
@@ -414,7 +424,7 @@ def _elapsed(job: dict) -> float:
 
 
 def _cancelled(job: dict) -> bool:
-    """True once a cancel has landed, stamping the elapsed time on the way out."""
+    """True once a cancel has landed, stamping elapsed time on the way out."""
     if job.get("status") != "cancelled":
         return False
     job["elapsed"] = _elapsed(job)

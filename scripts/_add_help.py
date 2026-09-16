@@ -1,4 +1,4 @@
-"""Add the help card to the vb::kimodo_motion HDA and save it (unpacked) to houdini/otls/."""
+"""Add the help card to vb::kimodo_motion, saved unpacked to houdini/otls/."""
 
 from pathlib import Path
 
@@ -227,8 +227,9 @@ def main():
     )
     hda_def = defs[0]
     hda_def.addSection("Help", HELP_CARD)
-    # Empty the expanded directory but keep it: Houdini saves expanded only into an
-    # existing directory, and a stale sibling definition must not survive a rename.
+    # Empty the expanded directory but keep it: Houdini saves expanded only
+    # into an existing directory, and a stale sibling definition must not
+    # survive a rename.
     import shutil
 
     if dest.is_dir():

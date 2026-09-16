@@ -1,4 +1,4 @@
-"""Everything that touches hou lives here; model.py and the tests never import it."""
+"""Everything that touches hou lives here. model.py and the tests do not."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def node_at(path):
 
 
 def load(node) -> Timeline:
-    """The node's timeline, seeded from Prompt/Duration/Pose Keyframes if it has none yet."""
+    """The node's timeline, from Prompt/Duration/Pose Keyframes if unset."""
     raw = node.parm("timeline_json").eval()
     if raw.strip():
         return Timeline.from_json(raw)
@@ -47,9 +47,9 @@ def load(node) -> Timeline:
 
 
 def save(node, tl: Timeline, label: str = "Kimodo timeline edit") -> None:
-    """Write the timeline back as one undoable step. Duration mirrors the total so the
-    node reads right even with the panel closed; Pose Keyframes mirrors the Full Body
-    track so legacy readers still see something sensible."""
+    """Write the timeline back as one undoable step. Duration mirrors the total
+    so the node reads right even with the panel closed; Pose Keyframes mirrors
+    the Full Body track so legacy readers still see something sensible."""
     with hou.undos.group(label):
         node.parm("timeline_json").set(tl.to_json())
         node.parm("has_timeline").set(1)
@@ -81,8 +81,9 @@ def current_frame() -> int:
 
 
 def set_frame(frame: int) -> None:
-    """Set the frame and let Houdini catch up. Without the update the viewport only
-    redraws once the mouse is released, so dragging the ruler does not read as scrubbing."""
+    """Set the frame and let Houdini catch up. Without the update the viewport
+    only redraws once the mouse is released, so dragging the ruler does not read
+    as scrubbing."""
     hou.setFrame(int(frame))
     if hou.isUIAvailable():
         hou.ui.triggerUpdate()
@@ -93,8 +94,9 @@ def status(node) -> str:
 
 
 def progress(node) -> float | None:
-    """0..1 while a job is in flight, else None. Keyed on job_id, which Generate sets on
-    queue and clears on every exit, rather than on the wording of the Status text."""
+    """0..1 while a job is in flight, else None. Keyed on job_id, which Generate
+    sets on queue and clears on every exit, rather than on the wording of the
+    Status text."""
     if node.parm("job_id").eval():
         return float(node.parm("progress").eval())
     return None

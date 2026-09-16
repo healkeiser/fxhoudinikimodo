@@ -2,17 +2,18 @@
 
     hython scripts/build_skin.py [skin_standard.npz] [out_dir]
 
-Produces two .bgeo.sc files (embedded into the HDA as sections by create_hda.py):
+Produces two .bgeo.sc files, embedded into the HDA by create_hda.py:
   - skin.bgeo.sc  : the SOMA77 body mesh in its A-pose bind, with a KineFX
                     `boneCapture` attribute (weights from Kimodo LBS, bind from
                     bind_rig_transform). Drive it with kinefx::jointdeform
                     (in0=this, in1=A-pose rest skeleton, in2=animated skeleton).
-  - apose.bgeo.sc : the A-pose rest skeleton (feet on floor) the mesh is bound to.
+  - apose.bgeo.sc : the A-pose rest skeleton (feet on floor) that the
+                    mesh is bound to.
 
 No torch needed: skin_standard.npz is a plain .npz, and the T-pose offsets (tp)
-come from the shared TPOSE_ROTS literals. The bind orientation uses bind_rig @ tp
-so the skeletons stay bone-aligned and consistent with the animated output0 (the
-per-joint tp offset cancels in jointdeform's anim @ inv(bind)).
+come from the shared TPOSE_ROTS literals. The bind orientation uses bind_rig @
+tp so the skeletons stay bone-aligned and consistent with the animated output0
+(the per-joint tp offset cancels in jointdeform's anim @ inv(bind)).
 """
 
 import sys
@@ -25,7 +26,7 @@ from _soma77 import TPOSE_ROTS
 
 _HERE = Path(__file__).resolve().parent
 _REPO = _HERE.parent
-# Default assumes the kimodo repo is cloned alongside this one (see the setup guide).
+# Default assumes the kimodo repo is cloned alongside this one (setup guide).
 _DEFAULT_NPZ = (
     _REPO.parent
     / "kimodo"
@@ -40,7 +41,7 @@ _OUT_DIR = Path(sys.argv[2]) if len(sys.argv) > 2 else _REPO
 
 
 def _houdini_world_rot(col_vec_rot):
-    """Kimodo column-vector global rotation -> Houdini row-vector float[9] (row-major)."""
+    """Kimodo column-vector rotation -> Houdini row-major float[9]."""
     return tuple(float(v) for v in col_vec_rot.T.flatten())
 
 
@@ -58,14 +59,15 @@ def _load():
 
 
 def build_skin_geo(d):
-    """Body mesh + unpacked capture, packed into a `boneCapture` index-pair attrib."""
+    """Body mesh + capture, packed into a `boneCapture` index-pair attrib."""
     tp = np.asarray(TPOSE_ROTS, dtype=np.float64).reshape(-1, 3, 3)
     bv, faces, idx, w, brt = d["bv"], d["faces"], d["idx"], d["w"], d["brt"]
     names = d["names"]
     J, V = len(names), bv.shape[0]
 
-    # World bind matrix per joint (Houdini row-vector / row-major): rot = (bind@tp).T,
-    # translation in the last row. pCaptData = its inverse (world -> rest) + 4 tube params.
+    # World bind matrix per joint (Houdini row-vector / row-major): rot =
+    # (bind@tp).T, translation in the last row. pCaptData = its inverse (world
+    # -> rest) + 4 tube params.
     pcapt = np.zeros((J, 20))
     for j in range(J):
         Wb = np.identity(4)
@@ -78,8 +80,8 @@ def build_skin_geo(d):
     pts = [g.createPoint() for _ in range(V)]
     for i, p in enumerate(pts):
         p.setPosition(hou.Vector3(bv[i].tolist()))
-    # Reverse winding: Kimodo's faces are wound opposite to Houdini's outward-normal
-    # convention, so flip each face's vertex order.
+    # Reverse winding: Kimodo's faces are wound opposite to Houdini's
+    # outward-normal convention, so flip each face's vertex order.
     g.createPolygons(tuple(tuple(int(x) for x in f[::-1]) for f in faces))
 
     g.addArrayAttrib(
@@ -106,7 +108,7 @@ def build_skin_geo(d):
         "boneCapture_pCaptData", [float(x) for x in pcapt.flatten()]
     )
 
-    # Pack the unpacked attribs into the standard `boneCapture` index-pair attribute.
+    # Pack the unpacked attribs into the `boneCapture` index-pair attribute.
     obj = hou.node("/obj")
     container = obj.createNode("geo", "_skinpack")
     container.deleteItems(container.children())
@@ -123,7 +125,7 @@ def build_skin_geo(d):
 
 
 def build_apose_skeleton(d):
-    """A-pose rest skeleton (feet on floor): name + transform + parent polylines."""
+    """A-pose rest skeleton (feet on floor): name, transform, parent lines."""
     tp = np.asarray(TPOSE_ROTS, dtype=np.float64).reshape(-1, 3, 3)
     brt, names, conn = d["brt"], d["names"], d["conn"]
     J = len(names)

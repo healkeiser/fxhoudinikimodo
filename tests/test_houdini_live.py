@@ -1,21 +1,23 @@
 """Live-session test: drive the real panel widgets inside a running Houdini.
 
-Run INSIDE Houdini (Python Shell or the MCP bridge), not hython: it needs hou.ui and a
-real Qt application.
+Run INSIDE Houdini (Python Shell or the MCP bridge), not hython: it needs hou.ui
+and a real Qt application.
 
     exec(open("tests/test_houdini_live.py").read()); print("\n".join(run()))
 
-SCOPE, honestly stated. These assert the hygiene properties we can measure: that the
-segment dialog is never modal, that dialogs and menus do not accumulate, that nothing
-waits on a nested event loop, that no Qt grab or modal widget is left behind.
+SCOPE, honestly stated. These assert the hygiene properties we can measure: that
+the segment dialog is never modal, that dialogs and menus do not accumulate,
+that nothing waits on a nested event loop, that no Qt grab or modal widget is
+left behind.
 
-They still do NOT prove the "Houdini panes stop answering the mouse" wedge is gone. We
-now know exactly what that wedge is: after a nested Qt event loop runs inside Houdini's
-UI pump, every NATIVE mouse message is delivered to Houdini's panes twice, so their
-press/release pairing never rebalances. Traced event by event with
-scripts/diagnose_input_wedge.py. But only a native message doubles; a synthetic one sent
-with sendEvent arrives exactly once, measured. So no test can generate the condition, and
-a human still has to click a Houdini pane to confirm. Use trace() in that script.
+They still do NOT prove the "Houdini panes stop answering the mouse" wedge is
+gone. We now know exactly what that wedge is: after a nested Qt event loop runs
+inside Houdini's UI pump, every NATIVE mouse message is delivered to Houdini's
+panes twice, so their press/release pairing never rebalances. Traced event by
+event with scripts/diagnose_input_wedge.py. But only a native message doubles; a
+synthetic one sent with sendEvent arrives exactly once, measured. So no test can
+generate the condition, and a human still has to click a Houdini pane to
+confirm. Use trace() in that script.
 """
 
 import gc
@@ -31,9 +33,10 @@ def _app():
 
 
 def _flush_deletes():
-    """Deliver DeferredDelete. processEvents() does NOT, so a hand-rolled flush that uses
-    it alone reports objects as leaked when they are merely pending. Measured: one
-    PromptDialog survives processEvents and dies on sendPostedEvents."""
+    """Deliver DeferredDelete. processEvents() does NOT, so a hand-rolled flush
+    that uses it alone reports objects as leaked when they are merely pending.
+    Measured: one PromptDialog survives processEvents and dies on
+    sendPostedEvents."""
     for _ in range(
         3
     ):  # deleting a widget posts further deletes for its children
@@ -50,8 +53,9 @@ def _count(cls):
 def _answer_dialog(accept=True):
     """Answer the segment dialog _ask has just shown, in line.
 
-    No timer, and that is the point: _ask no longer waits, so nothing here would pump a
-    timer. accept() emits finished synchronously, which is what runs the callback.
+    No timer, and that is the point: _ask no longer waits, so nothing here would
+    pump a timer. accept() emits finished synchronously, which is what runs the
+    callback.
     """
     for w in _app().topLevelWidgets():
         if isinstance(w, widget.PromptDialog) and w.isVisible():
@@ -63,9 +67,10 @@ def _answer_dialog(accept=True):
 def _close_visible(cls, delay_ms=60, tries=50):
     """Close the next visible widget of `cls`, from the event loop.
 
-    Armed BEFORE the call that shows it, because contextMenuEvent execs the menu and
-    does not return until it closes. exec pumps the event loop, which is what lets this
-    timer fire at all. Bounded, so a menu that never appears cannot spin forever.
+    Armed BEFORE the call that shows it, because contextMenuEvent execs the menu
+    and does not return until it closes. exec pumps the event loop, which is
+    what lets this timer fire at all. Bounded, so a menu that never appears
+    cannot spin forever.
     """
 
     def go(n=0):
@@ -86,8 +91,8 @@ def _canvas():
 
 
 def test_segment_dialog_is_never_modal():
-    """Modality is the property that pulls Houdini into a blocked state. Whatever the
-    exact mechanism, the dialog has no business being modal."""
+    """Modality is the property that pulls Houdini into a blocked state.
+    Whatever the exact mechanism, the dialog has no business being modal."""
     dlg = widget.PromptDialog("x", 24, hou.qt.mainWindow())
     dlg.show()
     try:
@@ -99,8 +104,9 @@ def test_segment_dialog_is_never_modal():
 
 
 def test_ask_calls_back_without_waiting():
-    """_ask hands its result to a callback and returns at once. If it ever went back to
-    waiting for the answer, it would need a nested loop, and that is the wedge."""
+    """_ask hands its result to a callback and returns at once. If it ever went
+    back to waiting for the answer, it would need a nested loop, and that is the
+    wedge."""
     c = _canvas()
     got = []
     try:
@@ -128,8 +134,8 @@ def test_ask_ignores_a_rejected_dialog():
 
 
 def test_dialogs_do_not_accumulate():
-    """Parented to the main window, a dialog lives until deleted. Three edits must not
-    leave three dialogs alive for the rest of the session."""
+    """Parented to the main window, a dialog lives until deleted. Three edits
+    must not leave three dialogs alive for the rest of the session."""
     c = _canvas()
     try:
         before = _count(
@@ -150,9 +156,10 @@ def test_dialogs_do_not_accumulate():
 def test_real_context_menu_does_not_leak():
     """Drives the actual contextMenuEvent, not a synthetic QMenu loop.
 
-    An earlier version of this test built its own menus and reported one leaking; that was
-    the loop variable still holding the last one at count time. Driving the real handler
-    and letting the local fall out of scope is the only version that measures our code.
+    An earlier version of this test built its own menus and reported one
+    leaking; that was the loop variable still holding the last one at count
+    time. Driving the real handler and letting the local fall out of scope is
+    the only version that measures our code.
     """
     from kimodo_timeline.qt import QtGui
 
@@ -184,8 +191,9 @@ def test_real_context_menu_does_not_leak():
 
 
 def test_no_input_grab_left_behind():
-    """Whatever the wedge is, a Qt grab would be one explanation. Assert we never leave
-    one, so that explanation can be ruled out rather than guessed at."""
+    """Whatever the wedge is, a Qt grab would be one explanation. Assert we
+    never leave one, so that explanation can be ruled out rather than guessed
+    at."""
     c = _canvas()
     try:
         c._ask("walk", 24, lambda text, frames: None)
@@ -205,11 +213,12 @@ def test_no_input_grab_left_behind():
 def test_no_mouse_event_escapes_the_canvas():
     """The input wedge, as a test that needs no human.
 
-    QApplication.notify walks a press up the parent chain for as long as each widget
-    ignores it, and a synthetic press walks it exactly like a real one. So put the canvas
-    inside a host widget and count who receives one press per button. Anything above the
-    canvas means it would have reached Houdini's pane in a real panel, and a right press
-    that gets there without its release is what wedges Houdini.
+    QApplication.notify walks a press up the parent chain for as long as each
+    widget ignores it, and a synthetic press walks it exactly like a real one.
+    So put the canvas inside a host widget and count who receives one press per
+    button. Anything above the canvas means it would have reached Houdini's pane
+    in a real panel, and a right press that gets there without its release is
+    what wedges Houdini.
     """
     seen = []
 
