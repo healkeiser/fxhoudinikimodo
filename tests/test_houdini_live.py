@@ -6,12 +6,16 @@ real Qt application.
     exec(open("tests/test_houdini_live.py").read()); print("\n".join(run()))
 
 SCOPE, honestly stated. These assert the hygiene properties we can measure: that the
-segment dialog is never modal, that dialogs do not accumulate, that no Qt grab or modal
-widget is left behind. They do NOT prove the "Houdini panes stop answering the mouse"
-wedge is gone, because no reliable programmatic detector for it has been found:
-hou.updateProgressAndCheckForInterrupt() was tried and never raises in this build, inside
-or outside a real operation, so it reports nothing. Only clicking a Houdini pane confirms
-that, and a human has to do it.
+segment dialog is never modal, that dialogs and menus do not accumulate, that nothing
+waits on a nested event loop, that no Qt grab or modal widget is left behind.
+
+They still do NOT prove the "Houdini panes stop answering the mouse" wedge is gone. We
+now know exactly what that wedge is: after a nested Qt event loop runs inside Houdini's
+UI pump, every NATIVE mouse message is delivered to Houdini's panes twice, so their
+press/release pairing never rebalances. Traced event by event with
+scripts/diagnose_input_wedge.py. But only a native message doubles; a synthetic one sent
+with sendEvent arrives exactly once, measured. So no test can generate the condition, and
+a human still has to click a Houdini pane to confirm. Use trace() in that script.
 """
 import gc
 
@@ -39,25 +43,33 @@ def _count(cls):
     return len([o for o in gc.get_objects() if isinstance(o, cls)])
 
 
-def _accept_visible_dialog(cls, delay_ms=60):
-    """Accept the next dialog of `cls` that appears, from the event loop."""
-    def go():
-        for w in _app().topLevelWidgets():
-            if isinstance(w, cls) and w.isVisible():
-                w.accept()
-                return
-        QtCore.QTimer.singleShot(delay_ms, go)
-    QtCore.QTimer.singleShot(delay_ms, go)
+def _answer_dialog(accept=True):
+    """Answer the segment dialog _ask has just shown, in line.
+
+    No timer, and that is the point: _ask no longer waits, so nothing here would pump a
+    timer. accept() emits finished synchronously, which is what runs the callback.
+    """
+    for w in _app().topLevelWidgets():
+        if isinstance(w, widget.PromptDialog) and w.isVisible():
+            w.accept() if accept else w.reject()
+            return True
+    return False
 
 
-def _close_visible(cls, delay_ms=60):
-    """Close the next visible widget of `cls`, from the event loop."""
-    def go():
+def _close_visible(cls, delay_ms=60, tries=50):
+    """Close the next visible widget of `cls`, from the event loop.
+
+    Armed BEFORE the call that shows it, because contextMenuEvent execs the menu and
+    does not return until it closes. exec pumps the event loop, which is what lets this
+    timer fire at all. Bounded, so a menu that never appears cannot spin forever.
+    """
+    def go(n=0):
         for w in _app().topLevelWidgets():
             if isinstance(w, cls) and w.isVisible():
                 w.close()
                 return
-        QtCore.QTimer.singleShot(delay_ms, go)
+        if n < tries:
+            QtCore.QTimer.singleShot(delay_ms, lambda: go(n + 1))
     QtCore.QTimer.singleShot(delay_ms, go)
 
 
@@ -80,15 +92,29 @@ def test_segment_dialog_is_never_modal():
         dlg.deleteLater()
 
 
-def test_ask_round_trips_without_exec():
-    """_ask must return the edited values while never entering Qt's modal loop."""
+def test_ask_calls_back_without_waiting():
+    """_ask hands its result to a callback and returns at once. If it ever went back to
+    waiting for the answer, it would need a nested loop, and that is the wedge."""
     c = _canvas()
+    got = []
     try:
-        _accept_visible_dialog(widget.PromptDialog)
-        accepted, text, frames = c._ask("walk", 24)
-        assert accepted, "dialog was not accepted; the harness drove it wrong"
-        assert frames == 24, "frames came back as %r" % (frames,)
+        c._ask("walk", 24, lambda text, frames: got.append((text, frames)))
+        assert not got, "_ask blocked; it must return before the dialog is answered"
+        assert _answer_dialog(), "_ask showed no dialog"
+        assert got == [("walk", 24)], "callback got %r" % (got,)
         assert _app().activeModalWidget() is None, "left a modal widget behind"
+    finally:
+        c.deleteLater()
+
+
+def test_ask_ignores_a_rejected_dialog():
+    """Cancel must change nothing."""
+    c = _canvas()
+    got = []
+    try:
+        c._ask("walk", 24, lambda text, frames: got.append((text, frames)))
+        assert _answer_dialog(accept=False), "_ask showed no dialog"
+        assert got == [], "Cancel still ran the callback: %r" % (got,)
     finally:
         c.deleteLater()
 
@@ -100,8 +126,8 @@ def test_dialogs_do_not_accumulate():
     try:
         before = _count(widget.PromptDialog)     # delta, not absolute: other tests ran
         for _ in range(3):
-            _accept_visible_dialog(widget.PromptDialog)
-            c._ask("walk", 24)
+            c._ask("walk", 24, lambda text, frames: None)
+            assert _answer_dialog(), "_ask showed no dialog"
         after = _count(widget.PromptDialog)
         assert after <= before, "segment dialogs accumulating: %d -> %d" % (before, after)
     finally:
@@ -121,11 +147,13 @@ def test_real_context_menu_does_not_leak():
     try:
         before = _count(QtWidgets.QMenu)
         for _ in range(3):
-            _close_visible(QtWidgets.QMenu)
+            _close_visible(QtWidgets.QMenu)      # armed first: contextMenuEvent blocks
             ev = QtGui.QContextMenuEvent(QtGui.QContextMenuEvent.Mouse,
                                          QtCore.QPoint(100, 30),      # over a segment
                                          QtCore.QPoint(500, 500))
             c.contextMenuEvent(ev)
+        c._menu = None          # the panel holds the last one on purpose; release it
+        assert _app().activePopupWidget() is None, "context menu left a popup open"
         after = _count(QtWidgets.QMenu)
         assert after <= before, "context menus accumulating: %d -> %d" % (before, after)
     finally:
@@ -137,8 +165,8 @@ def test_no_input_grab_left_behind():
     one, so that explanation can be ruled out rather than guessed at."""
     c = _canvas()
     try:
-        _accept_visible_dialog(widget.PromptDialog)
-        c._ask("walk", 24)
+        c._ask("walk", 24, lambda text, frames: None)
+        assert _answer_dialog(), "_ask showed no dialog"
         assert QtWidgets.QWidget.mouseGrabber() is None, "mouse grab left behind"
         assert QtWidgets.QWidget.keyboardGrabber() is None, "keyboard grab left behind"
         assert _app().activePopupWidget() is None, "popup left behind"

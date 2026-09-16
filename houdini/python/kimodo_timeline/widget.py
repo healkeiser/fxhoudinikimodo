@@ -37,22 +37,21 @@ TRACK_COLORS = {
 def later(fn, _poll_ms=16):
     """Run fn from the event loop, and only once no mouse button is held.
 
-    Two separate hazards, one helper.
+    Anything that hands control back to Houdini - pressing a node's button, writing
+    parms inside an undo group - should not do it while Qt is still dispatching an
+    event, so this defers to the event loop.
 
-    Deferring at all: anything that opens a nested event loop, or hands control to
-    Houdini, must not do it while Qt is still dispatching an event.
+    Waiting for the release on top of that is belt and braces: SideFX document that
+    Houdini "tracks mouse button events globally across all Qt widgets" and that the
+    flag guarding it is re-enabled "on the next mouse button release"
+    (hou.qt.skipClosingMenusForCurrentButtonPress), so running between a real press and
+    its release is asking for trouble.
 
-    Waiting for the release is the important half. SideFX document that "a mouse button
-    event sent to any Qt widget in the Houdini process will cause all open Houdini menus
-    to close", that Houdini "tracks mouse button events globally across all Qt widgets",
-    and that the flag guarding this is re-enabled "on the next mouse button release"
-    (hou.qt.skipClosingMenusForCurrentButtonPress). Open a nested event loop between a
-    real press and its release and Houdini never sees that release, so its global mouse
-    state never rebalances: its own panes stop answering the mouse while plain Qt widgets
-    carry on, until a restart.
-
-    That also explains why this was so hard to reproduce. A synthetic QAction.trigger()
-    creates no press/release pair at all, so it never wedges; only a real click does.
+    What it is NOT is the cure for the input wedge, however many commits said so. The
+    measured fact there is that after our context menu ran, every native mouse message
+    reached Houdini's panes twice. The mechanism is still not understood; the current bet
+    is fxhoucachemanager's menu shape, which has never wedged Houdini. See
+    contextMenuEvent.
     """
     def go():
         if QtWidgets.QApplication.mouseButtons() != QtCore.Qt.NoButton:
@@ -156,6 +155,7 @@ class Canvas(QtWidgets.QWidget):
         self._key = None                  # current key frame for key drags
         self._drop = None                 # drop index while moving a segment
         self._pan_x = 0.0
+        self._menu = None                 # the open context menu, kept alive
         self.setMouseTracking(True)
         self.setFocusPolicy(QtCore.Qt.StrongFocus)
         self.setMinimumHeight(RULER_H + PROMPT_H + TRACK_H * len(TRACKS) + 8)
@@ -493,44 +493,61 @@ class Canvas(QtWidgets.QWidget):
             self.fit()
 
     def contextMenuEvent(self, ev):
+        """Built and run the way fxhoucachemanager does it, which has never wedged Houdini.
+
+        Three things it does differently, kept together because we do not know which one
+        matters:
+          - hou.qt.Menu(), Houdini's own C++ factory (hou.qt._createMenu), so Houdini
+            made the popup and knows it exists. A QtWidgets.QMenu is invisible to it.
+          - exec, and read the chosen action back from it. Nothing is connected to
+            `triggered`, so none of our code runs inside the menu's own event loop.
+          - the handler runs after exec has returned and that loop has unwound.
+        Held on self as well so an unparented menu outlives the call that made it.
+        """
         pos = QtCore.QPointF(ev.pos())
         row, track = self._row_of(pos.y())
-        menu = QtWidgets.QMenu()
+        menu = hou.qt.Menu()
+        do = {}                     # QAction -> what to run once the menu has closed
         if row == "prompt":
             i, _ = self._seg_at(pos)
             if i >= 0:
-                menu.addAction("Edit segment\u2026", lambda: later(lambda: self.edit_prompt(i)))
-                menu.addAction("Add segment after", lambda: later(lambda: self.add_segment(after=i)))
-                menu.addAction("Split at playhead", lambda: self.split_at(i, self.playhead))
+                do[menu.addAction("Edit segment\u2026")] = lambda: self.edit_prompt(i)
+                do[menu.addAction("Add segment after")] = lambda: self.add_segment(after=i)
+                do[menu.addAction("Split at playhead")] = lambda: self.split_at(i, self.playhead)
                 menu.addSeparator()
-                one = menu.addAction("Regenerate this segment\u2026",
-                                     lambda: self.regenRequested.emit(i, False))
-                rest = menu.addAction("Regenerate from here to the end\u2026",
-                                      lambda: self.regenRequested.emit(i, True))
+                one = menu.addAction("Regenerate this segment\u2026")
+                rest = menu.addAction("Regenerate from here to the end\u2026")
+                do[one] = lambda: self.regenRequested.emit(i, False)
+                do[rest] = lambda: self.regenRequested.emit(i, True)
                 for act in (one, rest):
                     act.setEnabled(i > 0)
                     if i == 0:
                         act.setToolTip("The first segment has no earlier motion to "
                                        "continue from; use Generate.")
                 menu.addSeparator()
-                menu.addAction("Delete segment", lambda: self.remove_segment(i))
+                do[menu.addAction("Delete segment")] = lambda: self.remove_segment(i)
             else:
-                menu.addAction("Add segment at end", lambda: later(self.add_segment))
+                do[menu.addAction("Add segment at end")] = self.add_segment
         elif row == "track":
             f = self.frame_at(pos.x())
             k = self._key_at(track, pos.x())
             if k is not None:
-                menu.addAction(f"Delete key at {k}", lambda: self.remove_key(track, k))
+                do[menu.addAction(f"Delete key at {k}")] = lambda: self.remove_key(track, k)
             else:
-                menu.addAction(f"Add {TRACK_LABELS[track]} key at {f}", lambda: self.add_key(track, f))
-            menu.addAction(f"Add {TRACK_LABELS[track]} key at playhead ({self.playhead})", lambda: self.add_key(track, self.playhead))
+                do[menu.addAction(f"Add {TRACK_LABELS[track]} key at {f}")] = lambda: self.add_key(track, f)
+            do[menu.addAction(f"Add {TRACK_LABELS[track]} key at playhead ({self.playhead})")] = \
+                lambda: self.add_key(track, self.playhead)
             if self.tl.tracks.get(track):
-                menu.addSeparator(); menu.addAction("Clear track", lambda: self.clear_track(track))
+                menu.addSeparator()
+                do[menu.addAction("Clear track")] = lambda: self.clear_track(track)
         else:
             return
         menu.addSeparator()
-        menu.addAction("Fit timeline  (F)", self.fit)
-        run_exec(menu, ev.globalPos())
+        do[menu.addAction("Fit timeline  (F)")] = self.fit
+        self._menu = menu
+        chosen = do.get(run_exec(menu, ev.globalPos()))
+        if chosen is not None:
+            later(chosen)           # and off the stack of this handler too
 
     def _scrub_to(self, x):
         """Move our own playhead and repaint straight away, then ask Houdini to follow.
@@ -542,49 +559,57 @@ class Canvas(QtWidgets.QWidget):
         self.frameRequested.emit(f)
 
     # -- model edits (each ends in one undoable write) ------------------------
-    def _ask(self, prompt, frames):
-        """Run the segment dialog and return (accepted, prompt, frames).
+    def _ask(self, prompt, frames, then):
+        """Show the segment dialog and call `then(text, frames)` if it is accepted.
 
-        show() and our own event loop, never exec(). QDialog.exec enters Qt's modal loop,
-        and in Houdini that leaves an operation scope open after the dialog has closed:
-        hou.updateProgressAndCheckForInterrupt stops raising, and from then on every
-        Houdini pane ignores the mouse while this panel keeps working, until a restart.
-        Measured twice with exactly that signature. This is the pattern SideFX use in
-        their own panels, see crowds/bakeagentdialog.py in $HFS/houdini/python3.13libs.
+        No event loop of our own, and that is the whole point. A nested Qt event loop
+        opened inside Houdini's UI pump leaves every native mouse message delivered to
+        Houdini's panes twice: press, press, release, release, so their press/release
+        pairing never rebalances and every pane except this one stops answering the
+        mouse until a restart. Measured in a live session, traced event by event. A
+        hand-rolled `while visible: processEvents()` pump is the same hazard as exec(),
+        it just spells it differently, so the only safe answer is not to wait at all:
+        show the dialog and continue from `finished`.
 
-        Parented to Houdini's main window so it picks up Houdini's stylesheet, which also
-        means Houdini keeps it alive after it closes; a fresh one per edit would then
-        outlive the session, so read what we need while it is alive and deleteLater it.
+        Parented to Houdini's main window so it picks up Houdini's stylesheet, which
+        would also make Houdini keep it alive after it closes; WA_DeleteOnClose ends it.
+        `finished` is emitted before the deferred delete runs, so reading the widgets
+        from the slot is safe.
         """
         dlg = PromptDialog(prompt, frames, hou.qt.mainWindow())
+        dlg.setAttribute(QtCore.Qt.WA_DeleteOnClose)
+
+        def done(result):
+            if result == QtWidgets.QDialog.Accepted:
+                then(dlg.text(), dlg.frames())
+
+        dlg.finished.connect(done)
         dlg.show()
-        loop = QtCore.QEventLoop()
-        while dlg.isVisible():
-            # bounded wait rather than a busy spin; wakes for every event either way
-            loop.processEvents(QtCore.QEventLoop.AllEvents, 50)
-        accepted = dlg.result() == QtWidgets.QDialog.Accepted
-        text, count = dlg.text(), dlg.frames()
-        # deleteLater is enough. Measured in a live session: the dialog is gone once
-        # DeferredDelete is delivered, which Houdini's event loop does. (processEvents
-        # does not deliver it, which is only a hazard for tests that flush by hand.)
-        dlg.deleteLater()
-        return accepted, text, count
 
     def edit_prompt(self, i):
         seg = self.tl.segments[i]
-        accepted, text, frames = self._ask(seg.prompt, seg.frames)
-        if accepted:
+
+        def apply(text, frames):
+            # the panel stays live while the dialog is open, so the segment can be gone
+            if i >= len(self.tl.segments):
+                return
             self.tl.set_prompt(i, text)
             if frames != seg.frames:
                 self.tl.resize(i, frames); self.tl.clamp_keys(self.start)
             self._commit("edit segment")
 
+        self._ask(seg.prompt, seg.frames, apply)
+
     def add_segment(self, after=None):
         default = self.tl.segments[after].frames if after is not None and self.tl.segments else int(round(3 * bridge.fps()))
-        accepted, text, frames = self._ask("", default)
-        if accepted:
-            self.tl.add(text, frames, after=after)
+
+        def apply(text, frames):
+            # same as edit_prompt: the timeline can have moved on while the dialog was up
+            at = after if after is not None and after < len(self.tl.segments) else None
+            self.tl.add(text, frames, after=at)
             self._commit("add segment")
+
+        self._ask("", default, apply)
 
     def split_at(self, i, frame):
         st = self.tl.starts(self.start)[i]

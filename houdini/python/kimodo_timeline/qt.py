@@ -36,5 +36,5 @@ def event_pos(ev):
 
 
 def run_exec(widget, *args):
-    """Run a modal QDialog or QMenu. PySide2 spells it exec_(), Qt6 exec()."""
+    """Run a QMenu and return the chosen action. PySide2 spells it exec_(), Qt6 exec()."""
     return (getattr(widget, "exec", None) or widget.exec_)(*args)
