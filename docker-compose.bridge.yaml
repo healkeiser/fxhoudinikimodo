@@ -77,6 +77,11 @@ services:
       MOCK_MODE: ${MOCK_MODE:-0}        # 0 = live inference; 1 = serve dev_reference.npz
       OUTPUT_DIR: /workspace/output
       TEXT_ENCODER_URL: "http://text-encoder:9550/"
+      # Never "auto". Kimodo's auto mode probes the encoder and, on any failure,
+      # silently loads its own copy of the 14 GB LLM2Vec instead, a second one on the
+      # same GPU as the text-encoder container's. Fail loudly and let the restart
+      # policy below wait the encoder out.
+      TEXT_ENCODER_MODE: api
       # Seconds one segment spends encoding text, used only to make the progress bar
       # creep during the phase the model reports nothing for. Measured CPU default;
       # lower it (or ignore it) when the encoder runs on the GPU.
@@ -86,6 +91,11 @@ services:
       # nvidia/Kimodo-SOMA-RP-v1.1`).
     deploy:
       <<: *gpu
+    # depends_on is honoured by `docker compose up` only: Docker Desktop's Start
+    # button, `docker start`, and a daemon restart all launch both containers at once,
+    # and the encoder binds :9550 only after its model is loaded (~100 s on cuda, up to
+    # 10 min on cpu). Retrying is what restarting the container by hand used to do.
+    restart: on-failure
     depends_on:
       text-encoder:
         condition: service_healthy
