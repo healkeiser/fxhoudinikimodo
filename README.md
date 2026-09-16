@@ -19,7 +19,7 @@
     <!-- Maintenance status -->
     <img src="https://img.shields.io/badge/maintenance-actively--developed-brightgreen.svg?&label=Maintenance">&nbsp;&nbsp;
     <!-- License -->
-    <img src="https://img.shields.io/badge/License-personal%20%2F%20research-blue.svg?&logo=open-source-initiative&logoColor=white" alt="License: personal / research"/>&nbsp;&nbsp;
+    <img src="https://img.shields.io/badge/License-MIT%20%2B%20upstream%20terms-blue.svg?&logoColor=white" alt="License: MIT + upstream terms"/>&nbsp;&nbsp;
     <!-- Last Commit -->
     <img src="https://img.shields.io/github/last-commit/healkeiser/fxhoudinikimodo?logo=github&label=Last%20Commit" alt="Last Commit"/>&nbsp;&nbsp;
     <!-- Commit Activity -->
@@ -420,4 +420,11 @@ Project Link: [fxhoudinikimodo](https://github.com/healkeiser/fxhoudinikimodo)
 
 ## License
 
-The bridge code, HDA and scripts follow the upstream project's terms: released for personal and research use. The NVIDIA Kimodo weights are under the [NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license), and the text encoder's base weights under the Llama 3 Community License. Read both before any use beyond personal testing.
+Two sets of terms, because this is a fork. See [LICENSE](LICENSE) for the file-by-file split.
+
+- **The timeline panel, the tests, the packaging and the docs written for this fork** are [MIT](LICENSE).
+- **Files derived from [chordee/kimodo-houdini-bridge](https://github.com/chordee/kimodo-houdini-bridge)**, which include `kimodo_server.py`, `scripts/create_hda.py`, the generated HDA and two of the docs, carry that project's terms: personal and research use. Upstream ships no license file, so those are the only terms granted, and only its author can widen them.
+
+Taken as a whole this repository is **not** open source under the OSI definition. A grant limited to personal and research use does not meet it.
+
+The model weights are separate again and bind you regardless: the Kimodo weights under the [NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license), the text encoder's base weights under the Llama 3 Community License. Read both before any use beyond personal testing.

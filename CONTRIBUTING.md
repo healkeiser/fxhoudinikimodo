@@ -146,9 +146,18 @@ does not retry them.
 
 ## Licensing of contributions
 
-The bridge code follows the upstream project's terms: released for personal and research
-use. The Kimodo weights are under the
-[NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license)
-and the text encoder's base weights under the Llama 3 Community License. By contributing
-you agree your work ships under the same terms as the rest of the repository. Read the
-[License](README.md#license) section before any use beyond personal testing.
+This repository is split across two sets of terms, and which one your contribution lands
+under depends on the file you touched. [LICENSE](LICENSE) has the exact list.
+
+- Touching the panel, the tests, the packaging or this file? That is the **MIT** half, and
+  your contribution ships under MIT.
+- Touching `kimodo_server.py`, `scripts/create_hda.py`, the generated HDA or the upstream
+  docs? Those are derived from
+  [chordee/kimodo-houdini-bridge](https://github.com/chordee/kimodo-houdini-bridge) and
+  carry its terms, personal and research use. Your additions there are offered under MIT
+  to the extent they are separable, which is what keeps a future relicensing possible if
+  upstream ever agrees to one.
+
+By contributing you agree to that split. The model weights are separate again and bind
+users regardless: [NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license)
+for the Kimodo weights, Llama 3 Community License for the text encoder's base weights.
