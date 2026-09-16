@@ -1,7 +1,7 @@
 
 node = kwargs["node"]
 node.setUserData("nodeshape", "bulge")
-# Seed the first sequence from the defaults. Keyed on the timeline being empty, not on
+# Seed the first segment from the defaults. Keyed on the timeline being empty, not on
 # the instance count: the multiparm defaults to 1, so a count test never fires.
 if not node.parm("timeline_json").eval().strip():
     if node.parm("segments").eval() < 1:

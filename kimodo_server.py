@@ -334,7 +334,7 @@ _ENCODE_EST_S = max(0.1, float(os.environ.get("KIMODO_ENCODE_EST_S", "30")))
 
 # What an encode actually took, the last time one finished on this server. It replaces the
 # estimate above as soon as there is one, and it deliberately survives the job that measured
-# it: a partial regeneration sends a single sequence, so it has no earlier segment of its own
+# it: a partial regeneration sends a single segment, so it has no earlier segment of its own
 # to learn from, and by then a full Generate has usually already run. A plain float written by
 # the inference thread and read by the event loop, so no lock.
 _encode_est_seen: Optional[float] = None

@@ -41,7 +41,7 @@ services:
     environment:
       <<: *hf-env
       # cpu keeps VRAM free (the encoder is the bulk of Kimodo's GPU footprint) at the
-      # cost of ~14 GB of host RAM and ~30 s of encoding per sequence. cuda is much
+      # cost of ~14 GB of host RAM and ~30 s of encoding per segment. cuda is much
       # faster but wants roughly 14 GB of VRAM on top of the motion model.
       TEXT_ENCODER_DEVICE: ${TEXT_ENCODER_DEVICE:-cpu}
     deploy:                     # needed for TEXT_ENCODER_DEVICE=cuda; harmless on cpu

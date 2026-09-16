@@ -202,18 +202,18 @@ A segment spends its opening transitioning out of the previous motion, so it has
 |---|---|---|
 | `a person jumps forward and lands on both feet` | 0.217 | 0.122 |
 | `a person leaps high into the air with both feet off the ground` | 0.940 | **0.900** |
-| `a person stands up and turns around` (no transition sequence before it) | -173 deg | **+18 deg** |
-| `a person turns around to face the opposite direction` (after its own transition sequence) | -193 deg | **-186 deg** |
+| `a person stands up and turns around` (no transition segment before it) | -173 deg | **+18 deg** |
+| `a person turns around to face the opposite direction` (after its own transition segment) | -193 deg | **-186 deg** |
 
 The strong versions keep about 96% of their standalone result. The weak ones lose most of it. So a timeline does not dilute everything by a fixed amount, it exposes prompts that had no margin to begin with.
 
 This is not caused by whatever precedes the segment: after a neutral standing segment the turn still managed only -73 deg, versus -64 deg after a deep squat.
 
-**So validate a sequence standalone first, then assemble.** If it is marginal alone it will disappear in a suite.
+**So validate a segment standalone first, then assemble.** If it is marginal alone it will disappear in a suite.
 
 ### Fix a weak segment by splitting it, not by lengthening it
 
-Duration is sequence-dependent, so there is no general rule:
+Duration is segment-dependent, so there is no general rule:
 
 | Fix | Result |
 |---|---|
@@ -225,7 +225,7 @@ Splitting beat the same total time spent on one segment. Note the opposite happe
 
 ### The same prompt does not give the same take twice
 
-Kimodo is unseeded, so every generation is a different take and the run-to-run spread can be larger than any prompt change. The same jump prompt, in the same position, in suites whose preceding sequences were identical:
+Kimodo is unseeded, so every generation is a different take and the run-to-run spread can be larger than any prompt change. The same jump prompt, in the same position, in suites whose preceding segments were identical:
 
 | Run | Airborne | Hip peak |
 |---|---|---|
@@ -235,7 +235,7 @@ Kimodo is unseeded, so every generation is a different take and the run-to-run s
 
 Nothing changed but the take. A good prompt raises the average, it does not guarantee the result.
 
-So for anything you have to show or ship: **generate, measure the sequence you care about, and regenerate if it came up weak.** Do not generate once and assume it holds. `force` bypasses the cache to get a fresh take of an identical request, and you can re-roll a single sequence rather than the whole clip: see [Regenerating part of a clip](#regenerating-part-of-a-clip).
+So for anything you have to show or ship: **generate, measure the segment you care about, and regenerate if it came up weak.** Do not generate once and assume it holds. `force` bypasses the cache to get a fresh take of an identical request, and you can re-roll a single segment rather than the whole clip: see [Regenerating part of a clip](#regenerating-part-of-a-clip).
 
 ### Do not prompt for hand or finger detail
 
@@ -244,22 +244,22 @@ Kimodo predicts on the 30-joint `somaskel30`, which strips most finger and hand 
 <!-- PARTIAL REGENERATION -->
 ## Regenerating Part of a Clip
 
-One weak sequence does not mean regenerating the whole clip. Each sequence in the __Sequences__ multiparm has two buttons, and the timeline panel offers the same pair on right-click:
+One weak segment does not mean regenerating the whole clip. Each segment in the __Segments__ multiparm has two buttons, and the timeline panel offers the same pair on right-click:
 
-__Regenerate__ re-rolls that sequence alone. The clip keeps its exact length and every frame either side is untouched, so it is a drop-in replacement for one take.
+__Regenerate__ re-rolls that segment alone. The clip keeps its exact length and every frame either side is untouched, so it is a drop-in replacement for one take.
 
-__From Here__ re-rolls that sequence and every sequence after it, for when the change should carry through the rest of the clip.
+__From Here__ re-rolls that segment and every segment after it, for when the change should carry through the rest of the clip.
 
 ### Why not just press Generate again
 
-Because generation is unseeded, so __Generate__ re-rolls *everything*. If eight sequences out of nine are good and one is not, a full generation gambles the eight to fix the one. Regenerating a single sequence leaves every other frame byte-identical, which is the thing you actually want, and it is the reason to use it even when a full generation is fast.
+Because generation is unseeded, so __Generate__ re-rolls *everything*. If eight segments out of nine are good and one is not, a full generation gambles the eight to fix the one. Regenerating a single segment leaves every other frame byte-identical, which is the thing you actually want, and it is the reason to use it even when a full generation is fast.
 
-Speed is a secondary argument, and how secondary depends on [where the text encoder runs](#where-to-run-the-text-encoder). Same nine-sequence clip, same machine:
+Speed is a secondary argument, and how secondary depends on [where the text encoder runs](#where-to-run-the-text-encoder). Same nine-segment clip, same machine:
 
 | | Encoder on CPU | Encoder on GPU |
 |---|---|---|
 | Generate, all nine | 506.9 s | 22.9 s |
-| Regenerate one sequence | ~60 s | **4.3 s** |
+| Regenerate one segment | ~60 s | **4.3 s** |
 
 On CPU the time saving is the headline. On GPU both are quick, and preserving the rest of the clip is the whole point.
 
@@ -268,26 +268,26 @@ On CPU the time saving is the headline. On GPU both are quick, and preserving th
 The node's __Status__ reports the measured join every time, so you can judge a result rather than assume it:
 
 ```
-Regenerated sequence 5; seam 2.44 / 3.46 cm vs 11.07 cm/sample (0.31x)
+Regenerated segment 5; seam 2.44 / 3.46 cm vs 11.07 cm/sample (0.31x)
 ```
 
-Two figures for a single sequence, one for each join, then the clip's own average movement per sample and the worst join as a ratio of it. Below 1.0x means the join moves less than the motion around it, which is the point at which it stops reading as a cut. Something approaching or above 1.0x is worth looking at.
+Two figures for a single segment, one for each join, then the clip's own average movement per sample and the worst join as a ratio of it. Below 1.0x means the join moves less than the motion around it, which is the point at which it stops reading as a cut. Something approaching or above 1.0x is worth looking at.
 
 ### How it works, and why a constraint is not enough
 
-Kimodo builds a multi-prompt clip one sequence at a time, each joined to the previous one by a transition: the previous tail is prepended as observed motion, moved to the origin, generated against, then moved back and alpha-blended. A fresh `/generate` starts with that history empty, so its first sequence takes the "first motion" path and no transition runs.
+Kimodo builds a multi-prompt clip one segment at a time, each joined to the previous one by a transition: the previous tail is prepended as observed motion, moved to the origin, generated against, then moved back and alpha-blended. A fresh `/generate` starts with that history empty, so its first segment takes the "first motion" path and no transition runs.
 
 Handing the previous tail over as an ordinary world-space constraint does not substitute for it. Measured, the constrained frames came back accurate to 0.04 cm but the motion after them continued **184 cm** away, because generation happens in the transition's local frame and a world-space constraint fights it.
 
 So the server takes a `continue_from` tail and seeds that history instead, which needs the `initial_motion` parameter added to `_multiprompt` in `kimodo/model/kimodo_model.py`. That parameter is purely additive: without it the model behaves exactly as before.
 
-Holding the *end* is a separate problem, because whatever follows was generated against the old tail. A `fullbody-global` plus `ee-global` constraint on the new sequence's last frames fixes it, and it works here where the same constraint failed above, because with the transition running user constraints are concatenated into the same observed-motion block and translated with it. Unpinned, that join measured 335 cm; pinned, 3.77 cm.
+Holding the *end* is a separate problem, because whatever follows was generated against the old tail. A `fullbody-global` plus `ee-global` constraint on the new segment's last frames fixes it, and it works here where the same constraint failed above, because with the transition running user constraints are concatenated into the same observed-motion block and translated with it. Unpinned, that join measured 335 cm; pinned, 3.77 cm.
 
 ### Requirements and limits
 
 - Needs `initial_motion` in `kimodo/model/kimodo_model.py`, which the [fork](https://github.com/healkeiser/kimodo) used in [Installation](#server) already has. Against stock `nv-tlabs/kimodo` the server returns 422 and the node tells you to update it.
-- The timeline must still describe the clip on disk. Edit a sequence length and the node refuses until you press __Generate__, because the cut would otherwise land in the wrong place.
-- The first sequence has no earlier motion to continue from, so both buttons are disabled on it.
+- The timeline must still describe the clip on disk. Edit a segment length and the node refuses until you press __Generate__, because the cut would otherwise land in the wrong place.
+- The first segment has no earlier motion to continue from, so both buttons are disabled on it.
 - Join quality depends on how dynamic the motion is where it joins: 0.21x joining into a settle, 1.83x joining straight after a jump.
 
 <!-- ENVIRONMENT VARIABLES -->
@@ -315,9 +315,9 @@ The text encoder (Llama 3 8B behind LLM2Vec) is the largest thing Kimodo loads a
 |---|---|---|
 | VRAM | ~4 GB, 6 GB sharing with Houdini | ~17 GB, plus the viewport |
 | System RAM | **~14 GB**, held for as long as the container runs | modest |
-| Speed | ~30 s of encoding per sequence, against ~8 s of denoising | encoding all but disappears |
+| Speed | ~30 s of encoding per segment, against ~8 s of denoising | encoding all but disappears |
 
-The default is CPU because it runs on a 6 GB card. If you have VRAM to spare, moving it is the single biggest change you can make. Measured on the same nine-sequence, 600-sample clip, same machine, cache bypassed:
+The default is CPU because it runs on a 6 GB card. If you have VRAM to spare, moving it is the single biggest change you can make. Measured on the same nine-segment, 600-sample clip, same machine, cache bypassed:
 
 | | Encoder on CPU | Encoder on GPU |
 |---|---|---|

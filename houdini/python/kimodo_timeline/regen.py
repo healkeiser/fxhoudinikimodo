@@ -58,7 +58,7 @@ def splice(old, new, cut: int, n: int, resume_at=None) -> dict:
 
     `new`'s first `n` samples are the blended seam the model produced for those frames,
     so they replace old[cut - n:cut] rather than being dropped. `resume_at` continues
-    with the rest of the original clip afterwards, for a single-sequence replacement.
+    with the rest of the original clip afterwards, for a single-segment replacement.
     """
     out = {}
     for k in CLIP_KEYS:
@@ -89,11 +89,11 @@ def mean_step(clip) -> float:
 
 
 def tail_pin(npz, cut_end: int, n: int, at_index: int) -> list:
-    """Constraints holding the new sequence's last `n` frames to the `n` samples before
+    """Constraints holding the new segment's last `n` frames to the `n` samples before
     `cut_end`, so whatever follows in the existing clip still joins on.
 
-    Indices are sequence-relative: the model crops user constraints with current_frame = 0
-    for the first requested sequence and prepends the transition afterwards. Full body plus
+    Indices are segment-relative: the model crops user constraints with current_frame = 0
+    for the first requested segment and prepends the transition afterwards. Full body plus
     end effectors, the same pairing the model uses for its own transitions.
     """
     head = slice(cut_end - n, cut_end)
@@ -109,7 +109,7 @@ def tail_pin(npz, cut_end: int, n: int, at_index: int) -> list:
 
 
 def samples_for(frames: int, scene_fps: float, source_fps: float) -> int:
-    """Samples the server will generate for a sequence: it uses int(duration * fps)."""
+    """Samples the server will generate for a segment: it uses int(duration * fps)."""
     return max(1, int(frames / scene_fps * source_fps))
 
 
@@ -122,15 +122,15 @@ def load_npz_bytes(blob: bytes) -> dict:
 # Below the pure functions so the module still imports without hou.
 
 def regenerate(node, seg_index: int, to_end: bool = False):
-    """Re-roll sequence `seg_index` (0-based), in place.
+    """Re-roll segment `seg_index` (0-based), in place.
 
-    By default only that sequence: its head is joined with continue_from and its tail is
-    held to the frames the next sequence was generated against, so the clip keeps its
+    By default only that segment: its head is joined with continue_from and its tail is
+    held to the frames the next segment was generated against, so the clip keeps its
     length and everything either side is untouched. Measured on a 601-sample clip, that
     leaves the two joins at 0.80x and 0.39x of the clip's own per-sample motion, against
     31.83x for the tail with no pin.
 
-    `to_end` re-rolls this sequence and every one after it instead, which is what you
+    `to_end` re-rolls this segment and every one after it instead, which is what you
     want when the change should carry through the rest of the clip.
 
     Returns as soon as the job is queued; a JobWatcher on Houdini's event loop finishes
@@ -149,9 +149,9 @@ def regenerate(node, seg_index: int, to_end: bool = False):
     if not tl.segments:
         raise ValueError("This node has no timeline to regenerate from.")
     if not 0 <= seg_index < len(tl.segments):
-        raise ValueError("Sequence %d is outside the timeline." % (seg_index + 1))
+        raise ValueError("Segment %d is outside the timeline." % (seg_index + 1))
     if seg_index == 0:
-        raise ValueError("Sequence 1 has no earlier motion to continue from; use Generate.")
+        raise ValueError("Segment 1 has no earlier motion to continue from; use Generate.")
     src = node.parm("npz_path").eval()
     if not src or not os.path.exists(src):
         raise ValueError("No generated clip on this node yet. Press Generate first.")
@@ -164,19 +164,19 @@ def regenerate(node, seg_index: int, to_end: bool = False):
 
     old = dict(np.load(src))     # read the archive once; an NpzFile re-decompresses per lookup
     have = old["posed_joints"].shape[0]
-    # A bounds check is not enough: edited sequence lengths still produce an in-range cut,
+    # A bounds check is not enough: edited segment lengths still produce an in-range cut,
     # just the wrong one. Compare what the timeline describes against what is on disk.
     expect = int(round(sum(frames) * source_fps / scene_fps))
     if abs(expect - have) > 2 * n:
         raise ValueError(
-            "The clip on disk is %d samples but this timeline describes %d. The sequence "
+            "The clip on disk is %d samples but this timeline describes %d. The segment "
             "lengths changed since it was generated, so the cut would land in the wrong "
             "place. Press Generate first." % (have, expect))
     if cut - n < 1 or cut > have:
-        raise ValueError("Sequence %d falls outside the clip on disk; press Generate."
+        raise ValueError("Segment %d falls outside the clip on disk; press Generate."
                          % (seg_index + 1))
 
-    # the last sequence has nothing after it, so a single re-roll and a run to the end
+    # the last segment has nothing after it, so a single re-roll and a run to the end
     # are the same thing
     single = not to_end and seg_index + 1 < len(tl.segments)
     send = tl.segments[seg_index:seg_index + 1] if single else tl.segments[seg_index:]
@@ -202,7 +202,7 @@ def regenerate(node, seg_index: int, to_end: bool = False):
     resp.raise_for_status()
     job = resp.json()["job_id"]
 
-    what = "sequence %d" % (seg_index + 1) if single else "from sequence %d" % (seg_index + 1)
+    what = "segment %d" % (seg_index + 1) if single else "from segment %d" % (seg_index + 1)
 
     def _merge(data, suffix):
         """Runs on the main thread when the job finishes, from the event-loop callback."""
@@ -214,7 +214,7 @@ def regenerate(node, seg_index: int, to_end: bool = False):
         jump = seam_jump(merged, head_at)
         joins = "%.2f cm" % (jump * 100)
         worst = jump
-        if resume_at is not None:                  # a single sequence has two joins
+        if resume_at is not None:                  # a single segment has two joins
             tail_jump = seam_jump(merged, head_at + new["posed_joints"].shape[0])
             joins = "%.2f / %.2f cm" % (jump * 100, tail_jump * 100)
             worst = max(worst, tail_jump)

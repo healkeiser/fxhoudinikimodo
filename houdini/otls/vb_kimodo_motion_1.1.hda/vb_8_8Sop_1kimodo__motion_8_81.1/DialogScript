@@ -28,7 +28,7 @@
             nolabel
             joinnext
             default { "0" }
-            help    "Open the __Kimodo Timeline__ panel for this node: prompt segments laid end to end, transitions, and Full Body / hand / foot pose tracks.\nWhile a timeline exists it owns Prompt, Duration and the pose parameters below.\n\n__A sequence is weaker in a timeline than on its own.__ A segment spends its opening transitioning out of the previous motion, so it has less time left for its own action. Measured: _a person stands up and turns around_ turns 173 deg generated alone, but only 18 deg as segment 6 of 8. Generate a sequence on its own first to check it works, then add it to the timeline.\nIf a segment comes out weak, __split it__ rather than lengthen it: as one 2.25 s segment that turn managed 64 deg, at 3.50 s it managed 154 deg, but split into _stands up from a squat_ + _turns around to face the opposite direction_ it managed 193 deg for the same total time."
+            help    "Open the __Kimodo Timeline__ panel for this node: prompt segments laid end to end, transitions, and Full Body / hand / foot pose tracks.\nWhile a timeline exists it owns Prompt, Duration and the pose parameters below.\n\n__A segment is weaker in a timeline than on its own.__ A segment spends its opening transitioning out of the previous motion, so it has less time left for its own action. Measured: _a person stands up and turns around_ turns 173 deg generated alone, but only 18 deg as segment 6 of 8. Generate a segment on its own first to check it works, then add it to the timeline.\nIf a segment comes out weak, __split it__ rather than lengthen it: as one 2.25 s segment that turn managed 64 deg, at 3.50 s it managed 154 deg, but split into _stands up from a squat_ + _turns around to face the opposite direction_ it managed 193 deg for the same total time."
             parmtag { "script_callback" "\nimport hou\nnode = kwargs[\"node\"]\nnode.setSelected(True, clear_all_selected=True)\ndesk = hou.ui.curDesktop()\ntab = None\nfor pt in hou.ui.paneTabs():          # hou.ui.paneTabs() includes floating panels; desk.paneTabs() does not\n    if pt.type() == hou.paneTabType.PythonPanel:\n        iface = pt.activeInterface()\n        if iface is not None and iface.name() == \"kimodo_timeline\":\n            tab = pt\n            break\nif tab is None:\n    iface = hou.pypanel.interfaceByName(\"kimodo_timeline\")\n    if iface is None:\n        node.parm(\"last_error\").set(\"Kimodo Timeline panel not found: is houdini/python_panels on HOUDINI_PATH (fxhoudinikimodo package)?\")\n        hou.ui.setStatusMessage(\"Kimodo: Timeline panel not found (see node error).\", severity=hou.severityType.Error)\n    else:\n        tab = desk.createFloatingPaneTab(hou.paneTabType.PythonPanel, size=(1100, 420))\n        tab.setActiveInterface(iface)\nif tab is not None:\n    tab.setIsCurrentTab()\n" }
             parmtag { "script_callback_language" "python" }
         }
@@ -74,7 +74,7 @@
         }
         multiscroll {
             name    "segments"
-            label    "Sequences"
+            label    "Segments"
             default 1
             range   { 1! 100 }
 
@@ -93,7 +93,7 @@
                 type    integer
                 invisible
                 default { "0" }
-                help    "First scene frame of this sequence, counted from __Start Frame__."
+                help    "First scene frame of this segment, counted from __Start Frame__."
                 range   { 0 10 }
             }
             parm {
@@ -102,7 +102,7 @@
                 type    integer
                 invisible
                 default { "0" }
-                help    "Last scene frame of this sequence."
+                help    "Last scene frame of this segment."
                 range   { 0 10 }
             }
             parm {
@@ -112,7 +112,7 @@
                 joinnext
                 size    16
                 default { "`chs(\"seg_from#\")` - `chs(\"seg_to#\")`   (`rint(ch(\"seg_frames#\") / ch(\"scene_fps\") * 100) / 100` s)" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" }
-                help    "Scene frames this sequence occupies, counted from __Start Frame__. Read-only: it follows the lengths above it."
+                help    "Scene frames this segment occupies, counted from __Start Frame__. Read-only: it follows the lengths above it."
             }
             parm {
                 name    "seg_frames#"
@@ -120,7 +120,7 @@
                 type    integer
                 joinnext
                 default { "48" }
-                help    "Length of this sequence in scene frames."
+                help    "Length of this segment in scene frames."
                 range   { 1! 240 }
                 parmtag { "script_callback" "\nnode = kwargs[\"node\"]\nnode.type().hdaModule().sync_from_parms(node)\n" }
                 parmtag { "script_callback_language" "python" }
@@ -131,7 +131,7 @@
                 type    button
                 joinnext
                 default { "0" }
-                help    "Cut this sequence in two at the playhead, keeping the prompt on both halves."
+                help    "Cut this segment in two at the playhead, keeping the prompt on both halves."
                 parmtag { "script_callback" "\nimport hou\nnode = kwargs[\"node\"]\ni = int(kwargs[\"script_multiparm_index\"]) - 1\nm = node.type().hdaModule()\ntl = m.read_timeline(node)\nsegs = tl.get(\"segments\") or []\nif 0 <= i < len(segs):\n    start = int(node.parm(\"start_frame\").eval()) + sum(int(s[\"frames\"]) for s in segs[:i])\n    left = int(round(hou.frame())) - start\n    if 0 < left < int(segs[i][\"frames\"]):\n        segs.insert(i + 1, {\"prompt\": segs[i][\"prompt\"],\n                            \"frames\": int(segs[i][\"frames\"]) - left})\n        segs[i][\"frames\"] = left\n        tl[\"segments\"] = segs\n        with hou.undos.group(\"Kimodo: split segment\"):\n            m.write_timeline(node, tl)\n            m.rebuild_segments(node)\n    elif hou.isUIAvailable():\n        hou.ui.setStatusMessage(\n            \"Kimodo: put the playhead inside this segment to split it.\",\n            severity=hou.severityType.Warning)\n" }
                 parmtag { "script_callback_language" "python" }
             }
@@ -141,7 +141,7 @@
                 type    button
                 joinnext
                 default { "0" }
-                help    "Re-roll this sequence alone. Everything before and after it is untouched and the clip keeps its length.\nThe previous sequence's tail is sent back as the seam and this sequence's own tail is pinned to the frames the next one was generated against, so both joins stay continuous; measured at 0.80x and 0.39x of the clip's own per-sample motion.\nMuch cheaper than Generate, which re-runs the whole clip. Blocks until done.\nNot available on the first sequence, which has no earlier motion to continue from."
+                help    "Re-roll this segment alone. Everything before and after it is untouched and the clip keeps its length.\nThe previous segment's tail is sent back as the seam and this segment's own tail is pinned to the frames the next one was generated against, so both joins stay continuous; measured at 0.80x and 0.39x of the clip's own per-sample motion.\nMuch cheaper than Generate, which re-runs the whole clip. Blocks until done.\nNot available on the first segment, which has no earlier motion to continue from."
                 parmtag { "script_callback" "\nnode = kwargs[\"node\"]\nnode.type().hdaModule().run_regenerate(node, int(kwargs[\"script_multiparm_index\"]) - 1, False)\n" }
                 parmtag { "script_callback_language" "python" }
             }
@@ -150,7 +150,7 @@
                 label   "From Here"
                 type    button
                 default { "0" }
-                help    "Re-roll this sequence and every sequence after it, keeping everything before it. Use this when the change should carry through the rest of the clip; use __Regenerate__ when only this sequence is wrong."
+                help    "Re-roll this segment and every segment after it, keeping everything before it. Use this when the change should carry through the rest of the clip; use __Regenerate__ when only this segment is wrong."
                 parmtag { "script_callback" "\nnode = kwargs[\"node\"]\nnode.type().hdaModule().run_regenerate(node, int(kwargs[\"script_multiparm_index\"]) - 1, True)\n" }
                 parmtag { "script_callback_language" "python" }
             }
@@ -162,7 +162,7 @@
             type    string
             invisible
             default { "a person walks forward" }
-            help    "Legacy single prompt, kept so HIPs saved before the Sequences multiparm still read. The __Sequences__ above are what gets generated."
+            help    "Legacy single prompt, kept so HIPs saved before the Segments multiparm still read. The __Segments__ above are what gets generated."
             parmtag { "editor" "1" }
             parmtag { "editorlines" "4-8" }
         }
@@ -195,7 +195,7 @@
             type    float
             invisible
             default { [ "$FPS" hscript-expr ] }
-            help    "The scene FPS, as an expression, so the sequence lengths in seconds follow it without anything having to refresh them."
+            help    "The scene FPS, as an expression, so the segment lengths in seconds follow it without anything having to refresh them."
             range   { 0 10 }
         }
         parm {

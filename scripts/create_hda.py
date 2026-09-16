@@ -786,11 +786,11 @@ node.type().hdaModule().run_regenerate(node, int(kwargs["script_multiparm_index"
 
 
 
-# Runs when a node of this type is created: node shape, and the first sequence.
+# Runs when a node of this type is created: node shape, and the first segment.
 _ON_CREATED = r"""
 node = kwargs["node"]
 node.setUserData("nodeshape", "bulge")
-# Seed the first sequence from the defaults. Keyed on the timeline being empty, not on
+# Seed the first segment from the defaults. Keyed on the timeline being empty, not on
 # the instance count: the multiparm defaults to 1, so a count test never fires.
 if not node.parm("timeline_json").eval().strip():
     if node.parm("segments").eval() < 1:
@@ -920,10 +920,10 @@ def build_hda(node_name, description, hda_path, generate_cb):
         help="Open the __Kimodo Timeline__ panel for this node: prompt segments laid end to "
              "end, transitions, and Full Body / hand / foot pose tracks.\nWhile a timeline "
              "exists it owns Prompt, Duration and the pose parameters below.\n\n"
-             "__A sequence is weaker in a timeline than on its own.__ A segment spends its "
+             "__A segment is weaker in a timeline than on its own.__ A segment spends its "
              "opening transitioning out of the previous motion, so it has less time left for "
              "its own action. Measured: _a person stands up and turns around_ turns 173 "
-             "deg generated alone, but only 18 deg as segment 6 of 8. Generate a sequence on its "
+             "deg generated alone, but only 18 deg as segment 6 of 8. Generate a segment on its "
              "own first to check it works, then add it to the timeline.\n"
              "If a segment comes out weak, __split it__ rather than lengthen it: as one "
              "2.25 s segment that turn managed 64 deg, at 3.50 s it managed 154 deg, but split "
@@ -960,9 +960,9 @@ def build_hda(node_name, description, hda_path, generate_cb):
         help="Bypass the server cache and run inference again even if an identical "
              "_prompt + duration + model + constraints_ was generated before.",
     ))
-    seg = hou.FolderParmTemplate("segments", "Sequences",
+    seg = hou.FolderParmTemplate("segments", "Segments",
                                  folder_type=hou.folderType.ScrollingMultiparmBlock)
-    seg.setDefaultValue(1)          # a node always has at least one sequence
+    seg.setDefaultValue(1)          # a node always has at least one segment
     seg.addParmTemplate(hou.StringParmTemplate(
         "seg_prompt#", "Prompt", 1, default_value=("",),
         script_callback=_SEG_SYNC_CB, script_callback_language=hou.scriptLanguage.Python,
@@ -970,11 +970,11 @@ def build_hda(node_name, description, hda_path, generate_cb):
     ))
     seg.addParmTemplate(hou.IntParmTemplate(
         "seg_from#", "Frames", 1, default_value=(0,), is_hidden=True,
-        help="First scene frame of this sequence, counted from __Start Frame__.",
+        help="First scene frame of this segment, counted from __Start Frame__.",
     ))
     seg.addParmTemplate(hou.IntParmTemplate(
         "seg_to#", "to", 1, default_value=(0,), is_hidden=True,
-        help="Last scene frame of this sequence.",
+        help="Last scene frame of this segment.",
     ))
     seg.addParmTemplate(hou.LabelParmTemplate(
         "seg_range#", "Frames", join_with_next=True,
@@ -982,35 +982,35 @@ def build_hda(node_name, description, hda_path, generate_cb):
         column_labels=('`chs("seg_from#")` - `chs("seg_to#")`   '
                        '(`rint(ch("seg_frames#") / ch("scene_fps") * 100) / 100` s)',)
                       + ("",) * 15,
-        help="Scene frames this sequence occupies, counted from __Start Frame__. "
+        help="Scene frames this segment occupies, counted from __Start Frame__. "
              "Read-only: it follows the lengths above it.",
     ))
     seg.addParmTemplate(hou.IntParmTemplate(
         "seg_frames#", "Length", 1, default_value=(48,),
         min=1, max=240, min_is_strict=True, max_is_strict=False, join_with_next=True,
         script_callback=_SEG_SYNC_CB, script_callback_language=hou.scriptLanguage.Python,
-        help="Length of this sequence in scene frames.",
+        help="Length of this segment in scene frames.",
     ))
     seg.addParmTemplate(hou.ButtonParmTemplate(
         "seg_split#", "Split", script_callback=_SEG_SPLIT_CB,
         script_callback_language=hou.scriptLanguage.Python, join_with_next=True,
-        help="Cut this sequence in two at the playhead, keeping the prompt on both halves.",
+        help="Cut this segment in two at the playhead, keeping the prompt on both halves.",
     ))
     seg.addParmTemplate(hou.ButtonParmTemplate(
         "seg_regen#", "Regenerate", script_callback=_SEG_REGEN_CB,
         script_callback_language=hou.scriptLanguage.Python, join_with_next=True,
-        help="Re-roll this sequence alone. Everything before and after it is untouched and "
+        help="Re-roll this segment alone. Everything before and after it is untouched and "
              "the clip keeps its length.\n"
-             "The previous sequence's tail is sent back as the seam and this sequence's own "
+             "The previous segment's tail is sent back as the seam and this segment's own "
              "tail is pinned to the frames the next one was generated against, so both joins "
              "stay continuous; measured at 0.80x and 0.39x of the clip's own per-sample motion.\n"
              "Much cheaper than Generate, which re-runs the whole clip. Blocks until done.\n"
-             "Not available on the first sequence, which has no earlier motion to continue from.",
+             "Not available on the first segment, which has no earlier motion to continue from.",
     ))
     seg.addParmTemplate(hou.ButtonParmTemplate(
         "seg_regen_end#", "From Here", script_callback=_SEG_REGEN_END_CB,
         script_callback_language=hou.scriptLanguage.Python,
-        help="Re-roll this sequence and every sequence after it, keeping everything before it. Use this when the change should carry through the rest of the clip; use __Regenerate__ when only this sequence is wrong.",
+        help="Re-roll this segment and every segment after it, keeping everything before it. Use this when the change should carry through the rest of the clip; use __Regenerate__ when only this segment is wrong.",
     ))
     gen.addParmTemplate(seg)
     gen.addParmTemplate(hou.StringParmTemplate(
@@ -1018,8 +1018,8 @@ def build_hda(node_name, description, hda_path, generate_cb):
         default_value=("a person walks forward",),
         tags={"editor": "1", "editorlines": "4-8"},
         is_hidden=True,
-        help="Legacy single prompt, kept so HIPs saved before the Sequences multiparm "
-             "still read. The __Sequences__ above are what gets generated.",
+        help="Legacy single prompt, kept so HIPs saved before the Segments multiparm "
+             "still read. The __Segments__ above are what gets generated.",
     ))
     gen.addParmTemplate(hou.IntParmTemplate(
         "duration_frames", "Duration (frames)", 1,
@@ -1042,7 +1042,7 @@ def build_hda(node_name, description, hda_path, generate_cb):
         default_expression=("$FPS",),
         default_expression_language=(hou.scriptLanguage.Hscript,),
         is_hidden=True,
-        help="The scene FPS, as an expression, so the sequence lengths in seconds follow "
+        help="The scene FPS, as an expression, so the segment lengths in seconds follow "
              "it without anything having to refresh them.",
     ))
     gen.addParmTemplate(hou.LabelParmTemplate(
@@ -1241,7 +1241,7 @@ def build_hda(node_name, description, hda_path, generate_cb):
         return line
     ds = [_relabel(line) for line in ds]
     # A multiparm's count has no min/max in HOM; clamp it in the DialogScript so the
-    # Sequences block cannot be emptied to zero.
+    # Segments block cannot be emptied to zero.
     for i, line in enumerate(ds):
         if line.strip() == 'name    "segments"':
             for j in range(i, min(i + 6, len(ds))):

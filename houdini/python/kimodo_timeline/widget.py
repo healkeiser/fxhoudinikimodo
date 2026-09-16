@@ -502,14 +502,14 @@ class Canvas(QtWidgets.QWidget):
                 menu.addAction("Add segment after", lambda: later(lambda: self.add_segment(after=i)))
                 menu.addAction("Split at playhead", lambda: self.split_at(i, self.playhead))
                 menu.addSeparator()
-                one = menu.addAction("Regenerate this sequence\u2026",
+                one = menu.addAction("Regenerate this segment\u2026",
                                      lambda: self.regenRequested.emit(i, False))
                 rest = menu.addAction("Regenerate from here to the end\u2026",
                                       lambda: self.regenRequested.emit(i, True))
                 for act in (one, rest):
                     act.setEnabled(i > 0)
                     if i == 0:
-                        act.setToolTip("The first sequence has no earlier motion to "
+                        act.setToolTip("The first segment has no earlier motion to "
                                        "continue from; use Generate.")
                 menu.addSeparator()
                 menu.addAction("Delete segment", lambda: self.remove_segment(i))
@@ -839,7 +839,7 @@ class TimelineWidget(QtWidgets.QWidget):
         self.canvas.update()
 
     def _regen(self, index, to_end=False):
-        """Re-roll a sequence, keeping what came before and, unless `to_end`, what comes
+        """Re-roll a segment, keeping what came before and, unless `to_end`, what comes
         after. Returns as soon as the job is queued; the merge happens on Houdini's event
         loop. Imported lazily: it needs numpy, and the rest of the panel does not."""
         if self.node is None:
